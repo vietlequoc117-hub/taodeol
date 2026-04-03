@@ -667,12 +667,17 @@
 
       async function fetchAdminExams() {
         try {
-          const q = query(collection(db, "exams"), where("adminId", "==", state.user.uid), orderBy("createdAt", "desc"));
+          // Remove orderBy to avoid index requirement if not created yet
+          const q = query(collection(db, "exams"), where("adminId", "==", state.user.uid));
           const snapshot = await getDocs(q);
           state.adminExams = [];
           snapshot.forEach(doc => {
             state.adminExams.push({ id: doc.id, ...doc.data() });
           });
+          
+          // Sort manually in memory to ensure latest is first without needing Firestore index
+          state.adminExams.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+          
           setScreen("admin_dashboard");
         } catch (error) {
           console.error(error);
@@ -1028,44 +1033,23 @@
       }
 
       async function parseExamWithGemini(html, examType) {
-        const prompt = `Bạn là một chuyên gia giáo dục. Hãy phân tích nội dung HTML trích xuất từ file DOCX đề thi và chuyển đổi nó thành định dạng JSON chính xác.
+        const prompt = `Bạn là một chuyên gia giáo dục và chuyên gia trích xuất dữ liệu. Hãy phân tích nội dung HTML trích xuất từ file DOCX đề thi và chuyển đổi nó thành định dạng JSON chính xác.
 
-Đề thi có 3 phần:
-Phần I: Câu trắc nghiệm nhiều phương án lựa chọn (mỗi câu có 4 phương án A, B, C, D).
-Phần II: Câu trắc nghiệm đúng sai (mỗi câu có các ý a, b, c, d, mỗi ý chọn Đúng hoặc Sai).
-Phần III: Câu trắc nghiệm trả lời ngắn (học sinh nhập số hoặc chữ).
+Đề thi có 3 phần chính:
+Phần I: Câu hỏi trắc nghiệm 4 lựa chọn (A, B, C, D). Chỉ có 1 đáp án đúng.
+Phần II: Câu hỏi trắc nghiệm Đúng/Sai. Mỗi câu hỏi lớn có nhiều ý nhỏ (thường là a, b, c, d). Mỗi ý nhỏ phải được xác định là Đúng (true) hoặc Sai (false).
+Phần III: Câu hỏi trả lời ngắn. Đáp án là một chuỗi văn bản hoặc số.
 
-Yêu cầu:
-1. Nhận diện chính xác các câu hỏi, các phương án và đáp án đúng (thường được gạch chân, in đậm hoặc tô đỏ trong file).
-2. Nếu không tìm thấy đáp án đúng, hãy tự suy luận dựa trên kiến thức chuyên môn (đặc biệt là các môn Lý, Hóa, Sinh, Địa, Sử, Tin).
-3. Định dạng JSON trả về phải khớp với cấu trúc sau:
-{
-  "part1": [
-    { "id": 1, "question": "Nội dung câu hỏi...", "options": ["A. ...", "B. ...", "C. ...", "D. ..."], "answer": 0 } // answer là chỉ số 0-3
-  ],
-  "part2": [
-    { 
-      "id": 1, 
-      "question": "Nội dung câu hỏi...", 
-      "subQuestions": [
-        { "id": "a", "text": "Nội dung ý a...", "answer": true },
-        { "id": "b", "text": "Nội dung ý b...", "answer": false },
-        { "id": "c", "text": "Nội dung ý c...", "answer": true },
-        { "id": "d", "text": "Nội dung ý d...", "answer": true }
-      ]
-    }
-  ],
-  "part3": [
-    { "id": 1, "question": "Nội dung câu hỏi...", "answer": "đáp án" }
-  ]
-}
+YÊU CẦU CỰC KỲ QUAN TRỌNG:
+1. Trích xuất TOÀN BỘ các câu hỏi có trong tài liệu. KHÔNG ĐƯỢC TÓM TẮT, KHÔNG ĐƯỢC BỎ SÓT bất kỳ câu nào. Nếu đề thi có 40 câu, bạn phải trả về đủ 40 câu.
+2. Nhận diện đáp án đúng: Đáp án thường được gạch chân (<u>), in đậm (<strong>), tô màu đỏ, hoặc có ký hiệu đặc biệt.
+3. Nếu không thấy đáp án được đánh dấu, hãy sử dụng kiến thức chuyên môn để giải và đưa ra đáp án chính xác nhất.
+4. Đối với Phần II: Đảm bảo trích xuất đầy đủ tất cả các ý nhỏ (a, b, c, d...) cho mỗi câu hỏi lớn.
+5. Giữ nguyên định dạng văn bản quan trọng, công thức, hoặc mã nguồn trong nội dung câu hỏi.
+6. Loại bỏ các phần tiêu đề hành chính (Tên trường, tên lớp, kỳ thi, lời dặn...) ở đầu trang.
+7. Đảm bảo các ID câu hỏi là số thứ tự tăng dần (1, 2, 3...).
 
-Lưu ý quan trọng:
-- Nếu file có các từ "Bài 1", "Bài 2" thay vì "Câu 1", "Câu 2", hãy coi đó là các câu hỏi.
-- Loại bỏ các thông tin thừa như tiêu đề trường, lớp, tên kỳ thi ở đầu file.
-- Giữ nguyên các công thức toán học hoặc đoạn mã code nếu có.
-
-Nội dung HTML:
+Nội dung HTML cần phân tích:
 ${html}`;
 
         try {
@@ -1131,7 +1115,14 @@ ${html}`;
             }
           });
 
-          return JSON.parse(response.text);
+          const parsedData = JSON.parse(response.text);
+          
+          // Ensure all parts exist as arrays
+          if (!parsedData.part1) parsedData.part1 = [];
+          if (!parsedData.part2) parsedData.part2 = [];
+          if (!parsedData.part3) parsedData.part3 = [];
+          
+          return parsedData;
         } catch (error) {
           console.error("Gemini Error:", error);
           // Fallback to manual parser if Gemini fails
@@ -1600,6 +1591,15 @@ ${html}`;
       }
 
       function renderExam() {
+        if (!state.examData) {
+          return `<div class="min-h-screen flex items-center justify-center bg-gray-50">
+                    <div class="text-center">
+                        <div class="animate-spin rounded-full h-12 w-12 border-4 border-blue-600 border-t-transparent mx-auto mb-4"></div>
+                        <p class="text-gray-600 font-medium">Đang tải dữ liệu đề thi...</p>
+                    </div>
+                  </div>`;
+        }
+
         let html = `
                 <div class="min-h-screen bg-gray-50 pb-24">
                     <!-- Header -->
@@ -1633,92 +1633,98 @@ ${html}`;
         const p3Points = "1.5";
 
         // Part 1
-        html += `
-                <div class="bg-white p-6 sm:p-8 rounded-2xl shadow-sm border border-gray-200">
-                    <div class="flex items-center mb-6 pb-4 border-b border-gray-100">
-                        <div class="bg-blue-600 text-white w-8 h-8 rounded-lg flex items-center justify-center font-bold mr-3">I</div>
-                        <h2 class="text-xl font-bold text-gray-800">Câu trắc nghiệm nhiều phương án lựa chọn <span class="text-sm font-normal text-gray-500 ml-2">(${p1Points} điểm)</span></h2>
-                    </div>
-                    <div class="space-y-8">
-            `;
-
-        state.examData.part1.forEach((q, index) => {
+        if (state.examData.part1 && state.examData.part1.length > 0) {
           html += `
-                    <div class="question-block bg-white p-5 rounded-xl border border-gray-200 shadow-sm">
-                        <p class="font-semibold text-gray-800 mb-4 whitespace-pre-wrap text-base">${q.question}</p>
-                        <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                `;
-          q.options.forEach((opt, optIndex) => {
-            if (optIndex >= 4) return; // Bắt buộc chỉ hiển thị 4 đáp án (A, B, C, D)
-            const isChecked =
-              state.answers.part1[q.id] === optIndex ? "checked" : "";
-            const letter = String.fromCharCode(65 + optIndex); // A, B, C, D
-            // Remove the A., B., C., D. prefix from the option text if it exists
-            const optText = opt.replace(/^[A-D][.:)\/]\s*/, "");
+                  <div class="bg-white p-6 sm:p-8 rounded-2xl shadow-sm border border-gray-200">
+                      <div class="flex items-center mb-6 pb-4 border-b border-gray-100">
+                          <div class="bg-blue-600 text-white w-8 h-8 rounded-lg flex items-center justify-center font-bold mr-3">I</div>
+                          <h2 class="text-xl font-bold text-gray-800">Câu trắc nghiệm nhiều phương án lựa chọn <span class="text-sm font-normal text-gray-500 ml-2">(${p1Points} điểm)</span></h2>
+                      </div>
+                      <div class="space-y-8">
+              `;
 
+          state.examData.part1.forEach((q, index) => {
+            if (!q || !q.options) return;
             html += `
-                        <label class="relative flex items-start p-3 cursor-pointer rounded-lg border border-gray-200 hover:bg-blue-50 hover:border-blue-300 transition-colors bg-white group">
-                            <input type="radio" name="p1_q${q.id}" value="${optIndex}" ${isChecked} onchange="saveAnswer('part1', ${q.id}, ${optIndex})" class="peer sr-only">
-                            <div class="w-6 h-6 rounded-full border border-gray-300 flex items-center justify-center mr-3 flex-shrink-0 bg-white text-gray-600 font-medium text-sm peer-checked:bg-blue-600 peer-checked:border-blue-600 peer-checked:text-white group-hover:border-blue-400 transition-all">
-                                ${letter}
-                            </div>
-                            <span class="text-gray-700 text-sm leading-relaxed pt-0.5 whitespace-pre-wrap">${optText}</span>
-                        </label>
-                    `;
+                      <div class="question-block bg-white p-5 rounded-xl border border-gray-200 shadow-sm">
+                          <p class="font-semibold text-gray-800 mb-4 whitespace-pre-wrap text-base">${q.question}</p>
+                          <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  `;
+            q.options.forEach((opt, optIndex) => {
+              if (optIndex >= 4) return; // Bắt buộc chỉ hiển thị 4 đáp án (A, B, C, D)
+              const isChecked =
+                state.answers.part1[q.id] === optIndex ? "checked" : "";
+              const letter = String.fromCharCode(65 + optIndex); // A, B, C, D
+              // Remove the A., B., C., D. prefix from the option text if it exists
+              const optText = opt.replace(/^[A-D][.:)\/]\s*/, "");
+
+              html += `
+                          <label class="relative flex items-start p-3 cursor-pointer rounded-lg border border-gray-200 hover:bg-blue-50 hover:border-blue-300 transition-colors bg-white group">
+                              <input type="radio" name="p1_q${q.id}" value="${optIndex}" ${isChecked} onchange="saveAnswer('part1', ${q.id}, ${optIndex})" class="peer sr-only">
+                              <div class="w-6 h-6 rounded-full border border-gray-300 flex items-center justify-center mr-3 flex-shrink-0 bg-white text-gray-600 font-medium text-sm peer-checked:bg-blue-600 peer-checked:border-blue-600 peer-checked:text-white group-hover:border-blue-400 transition-all">
+                                  ${letter}
+                              </div>
+                              <span class="text-gray-700 text-sm leading-relaxed pt-0.5 whitespace-pre-wrap">${optText}</span>
+                          </label>
+                      `;
+            });
+            html += `</div></div>`;
           });
           html += `</div></div>`;
-        });
-        html += `</div></div>`;
+        }
 
         // Part 2
-        html += `
-                <div class="bg-white p-6 sm:p-8 rounded-2xl shadow-sm border border-gray-200">
-                    <div class="flex items-center mb-6 pb-4 border-b border-gray-100">
-                        <div class="bg-blue-600 text-white w-8 h-8 rounded-lg flex items-center justify-center font-bold mr-3">II</div>
-                        <h2 class="text-xl font-bold text-gray-800">Câu trắc nghiệm đúng sai <span class="text-sm font-normal text-gray-500 ml-2">(${p2Points} điểm)</span></h2>
-                    </div>
-                    <div class="space-y-8">
-            `;
-
-        state.examData.part2.forEach((q, index) => {
+        if (state.examData.part2 && state.examData.part2.length > 0) {
           html += `
-                    <div class="question-block bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
-                        <div class="p-5 border-b border-gray-100 bg-gray-50">
-                            <p class="text-gray-800 text-base whitespace-pre-wrap font-medium">${q.question}</p>
-                        </div>
-                        <div class="p-2 sm:p-5">
-                `;
-          q.subQuestions.forEach((sq) => {
-            const ans =
-              state.answers.part2[q.id] && state.answers.part2[q.id][sq.id];
-            const isTrueChecked = ans === true ? "checked" : "";
-            const isFalseChecked = ans === false ? "checked" : "";
+                  <div class="bg-white p-6 sm:p-8 rounded-2xl shadow-sm border border-gray-200">
+                      <div class="flex items-center mb-6 pb-4 border-b border-gray-100">
+                          <div class="bg-blue-600 text-white w-8 h-8 rounded-lg flex items-center justify-center font-bold mr-3">II</div>
+                          <h2 class="text-xl font-bold text-gray-800">Câu trắc nghiệm đúng sai <span class="text-sm font-normal text-gray-500 ml-2">(${p2Points} điểm)</span></h2>
+                      </div>
+                      <div class="space-y-8">
+              `;
 
-            const sqText = sq.text.replace(/^[a-e][.:)\/]\s*/i, "");
-
+          state.examData.part2.forEach((q, index) => {
+            if (!q || !q.subQuestions) return;
             html += `
-                        <div class="flex items-start gap-3 sm:gap-4 py-3 sm:py-4 border-b border-gray-100 last:border-0">
-                            <div class="font-medium text-gray-800 w-5 pt-1.5 shrink-0">${sq.id})</div>
-                            <div class="flex gap-2 shrink-0">
-                                <label class="relative cursor-pointer">
-                                    <input type="radio" name="p2_q${q.id}_${sq.id}" value="true" ${isTrueChecked} onchange="saveAnswer('part2', ${q.id}, true, '${sq.id}')" class="peer sr-only">
-                                    <div class="px-3 sm:px-4 py-1.5 rounded-lg border border-gray-200 text-sm font-medium text-gray-600 peer-checked:bg-[#283553] peer-checked:text-white peer-checked:border-[#283553] transition-colors bg-white hover:bg-gray-50">Đúng</div>
-                                </label>
-                                <label class="relative cursor-pointer">
-                                    <input type="radio" name="p2_q${q.id}_${sq.id}" value="false" ${isFalseChecked} onchange="saveAnswer('part2', ${q.id}, false, '${sq.id}')" class="peer sr-only">
-                                    <div class="px-3 sm:px-4 py-1.5 rounded-lg border border-gray-200 text-sm font-medium text-gray-600 peer-checked:bg-[#283553] peer-checked:text-white peer-checked:border-[#283553] transition-colors bg-white hover:bg-gray-50">Sai</div>
-                                </label>
-                            </div>
-                            <div class="text-gray-800 text-sm leading-relaxed pt-1.5 whitespace-pre-wrap">${sqText}</div>
-                        </div>
-                    `;
+                      <div class="question-block bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
+                          <div class="p-5 border-b border-gray-100 bg-gray-50">
+                              <p class="text-gray-800 text-base whitespace-pre-wrap font-medium">${q.question}</p>
+                          </div>
+                          <div class="p-2 sm:p-5">
+                  `;
+            q.subQuestions.forEach((sq) => {
+              const ans =
+                state.answers.part2[q.id] && state.answers.part2[q.id][sq.id];
+              const isTrueChecked = ans === true ? "checked" : "";
+              const isFalseChecked = ans === false ? "checked" : "";
+
+              const sqText = sq.text.replace(/^[a-e][.:)\/]\s*/i, "");
+
+              html += `
+                          <div class="flex items-start gap-3 sm:gap-4 py-3 sm:py-4 border-b border-gray-100 last:border-0">
+                              <div class="font-medium text-gray-800 w-5 pt-1.5 shrink-0">${sq.id})</div>
+                              <div class="flex gap-2 shrink-0">
+                                  <label class="relative cursor-pointer">
+                                      <input type="radio" name="p2_q${q.id}_${sq.id}" value="true" ${isTrueChecked} onchange="saveAnswer('part2', ${q.id}, true, '${sq.id}')" class="peer sr-only">
+                                      <div class="px-3 sm:px-4 py-1.5 rounded-lg border border-gray-200 text-sm font-medium text-gray-600 peer-checked:bg-[#283553] peer-checked:text-white peer-checked:border-[#283553] transition-colors bg-white hover:bg-gray-50">Đúng</div>
+                                  </label>
+                                  <label class="relative cursor-pointer">
+                                      <input type="radio" name="p2_q${q.id}_${sq.id}" value="false" ${isFalseChecked} onchange="saveAnswer('part2', ${q.id}, false, '${sq.id}')" class="peer sr-only">
+                                      <div class="px-3 sm:px-4 py-1.5 rounded-lg border border-gray-200 text-sm font-medium text-gray-600 peer-checked:bg-[#283553] peer-checked:text-white peer-checked:border-[#283553] transition-colors bg-white hover:bg-gray-50">Sai</div>
+                                  </label>
+                              </div>
+                              <div class="text-gray-800 text-sm leading-relaxed pt-1.5 whitespace-pre-wrap">${sqText}</div>
+                          </div>
+                      `;
+            });
+            html += `</div></div>`;
           });
           html += `</div></div>`;
-        });
-        html += `</div></div>`;
+        }
 
         // Part 3
-        if (examType === "2") {
+        if (examType === "2" && state.examData.part3 && state.examData.part3.length > 0) {
           html += `
                   <div class="bg-white p-6 sm:p-8 rounded-2xl shadow-sm border border-gray-200">
                       <div class="flex items-center mb-6 pb-4 border-b border-gray-100">
@@ -1729,6 +1735,7 @@ ${html}`;
               `;
 
           state.examData.part3.forEach((q, index) => {
+            if (!q) return;
             const val = state.answers.part3[q.id] || "";
             html += `
                       <div class="question-block bg-gray-50 p-5 rounded-xl border border-gray-100">
@@ -1994,6 +2001,17 @@ ${html}`;
         
         if (examId) {
           state.examId = examId;
+          // Show loading
+          const app = document.getElementById("app");
+          app.innerHTML = `
+            <div class="min-h-screen flex items-center justify-center bg-blue-50">
+                <div class="text-center">
+                    <div class="animate-spin rounded-full h-12 w-12 border-4 border-blue-600 border-t-transparent mx-auto mb-4"></div>
+                    <p class="text-gray-600 font-medium">Đang tải bài thi...</p>
+                </div>
+            </div>
+          `;
+          
           try {
             const docRef = window.doc(window.db, "exams", examId);
             const docSnap = await window.getDoc(docRef);
