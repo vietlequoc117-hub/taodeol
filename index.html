@@ -48,7 +48,19 @@
       const app = initializeApp(firebaseConfig);
       const auth = getAuth(app);
       const db = getFirestore(app, "ai-studio-5cf3ce3b-130b-466b-9ae9-5cf7ba3aa2ec");
-      const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
+      
+      let ai = null;
+      try {
+        const apiKey = process.env.GEMINI_API_KEY;
+        // Check if apiKey exists and is not the string "undefined" (which can happen during Vite build if env var is missing)
+        if (apiKey && apiKey !== "undefined" && apiKey.trim() !== "") {
+          ai = new GoogleGenAI({ apiKey: apiKey });
+        } else {
+          console.warn("GEMINI_API_KEY is missing. AI parsing will be disabled.");
+        }
+      } catch (e) {
+        console.error("Failed to initialize GoogleGenAI:", e);
+      }
 
       window.auth = auth;
       window.db = db;
@@ -1053,6 +1065,12 @@ Nội dung HTML cần phân tích:
 ${html}`;
 
         try {
+          if (!ai) {
+            console.warn("AI is not initialized (missing API Key). Falling back to manual parser.");
+            showAlert("Chưa cấu hình API Key trên Vercel. Đang sử dụng bộ phân tích cơ bản (có thể không chính xác bằng AI).");
+            return parseExamHTML(html);
+          }
+
           const response = await ai.models.generateContent({
             model: "gemini-3-flash-preview",
             contents: prompt,
