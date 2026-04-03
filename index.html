@@ -34,6 +34,7 @@
       import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-app.js";
       import { getAuth, signInWithPopup, GoogleAuthProvider, onAuthStateChanged, signOut } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-auth.js";
       import { getFirestore, collection, addDoc, getDoc, getDocs, doc, setDoc, query, where, orderBy, deleteDoc, onSnapshot } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js";
+      import { GoogleGenAI, Type } from "@google/genai";
 
       const firebaseConfig = {
         projectId: "gen-lang-client-0573885621",
@@ -47,6 +48,7 @@
       const app = initializeApp(firebaseConfig);
       const auth = getAuth(app);
       const db = getFirestore(app, "ai-studio-5cf3ce3b-130b-466b-9ae9-5cf7ba3aa2ec");
+      const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
 
       window.auth = auth;
       window.db = db;
@@ -970,43 +972,171 @@
         return html;
       }
 
-      function handleFileUpload(event) {
+      async function handleFileUpload(event) {
         const file = event.target.files[0];
         if (!file) return;
         const examType = document.getElementById("examTypeSelect").value;
 
+        // Show loading
+        const loadingModal = document.createElement("div");
+        loadingModal.id = "loading-modal";
+        loadingModal.className = "fixed inset-0 bg-black/50 flex items-center justify-center z-[1000]";
+        loadingModal.innerHTML = `
+          <div class="bg-white p-8 rounded-2xl shadow-xl text-center max-w-sm mx-4">
+            <div class="animate-spin rounded-full h-12 w-12 border-4 border-blue-600 border-t-transparent mx-auto mb-4"></div>
+            <h3 class="text-xl font-bold text-gray-800 mb-2">Đang xử lý đề thi...</h3>
+            <p class="text-gray-600">AI đang phân tích nội dung file DOCX của bạn. Quá trình này có thể mất 10-20 giây.</p>
+          </div>
+        `;
+        document.body.appendChild(loadingModal);
+
         const reader = new FileReader();
-        reader.onload = function (e) {
+        reader.onload = async function (e) {
           const arrayBuffer = e.target.result;
-          mammoth
-            .convertToHtml(
+          try {
+            const result = await mammoth.convertToHtml(
               { arrayBuffer: arrayBuffer },
               {
                 styleMap: ["u => u", "b => strong", "i => em", "strike => s"],
               },
-            )
-            .then(function (result) {
-              const html = result.value;
-              const newExamData = parseExamHTML(html);
-              newExamData.examType = examType;
+            );
+            const html = result.value;
+            
+            // Use Gemini to parse the exam
+            const newExamData = await parseExamWithGemini(html, examType);
+            newExamData.examType = examType;
 
-              // Cập nhật dữ liệu đề thi
-              state.examData = newExamData;
+            // Cập nhật dữ liệu đề thi
+            state.examData = newExamData;
 
-              // Reset state
-              state.answers = { part1: {}, part2: {}, part3: {} };
-              state.score = 0;
-              state.results = null;
+            // Reset state
+            state.answers = { part1: {}, part2: {}, part3: {} };
+            state.score = 0;
+            state.results = null;
 
-              // Save exam to Firestore
-              saveExamToFirestore(newExamData, file.name, examType);
-            })
-            .catch(function (err) {
-              console.error(err);
-              showAlert("Lỗi khi đọc file DOCX. Vui lòng thử lại.");
-            });
+            // Save exam to Firestore
+            await saveExamToFirestore(newExamData, file.name, examType);
+          } catch (err) {
+            console.error(err);
+            showAlert("Lỗi khi xử lý đề thi: " + err.message);
+          } finally {
+            const modal = document.getElementById("loading-modal");
+            if (modal) modal.remove();
+          }
         };
         reader.readAsArrayBuffer(file);
+      }
+
+      async function parseExamWithGemini(html, examType) {
+        const prompt = `Bạn là một chuyên gia giáo dục. Hãy phân tích nội dung HTML trích xuất từ file DOCX đề thi và chuyển đổi nó thành định dạng JSON chính xác.
+
+Đề thi có 3 phần:
+Phần I: Câu trắc nghiệm nhiều phương án lựa chọn (mỗi câu có 4 phương án A, B, C, D).
+Phần II: Câu trắc nghiệm đúng sai (mỗi câu có các ý a, b, c, d, mỗi ý chọn Đúng hoặc Sai).
+Phần III: Câu trắc nghiệm trả lời ngắn (học sinh nhập số hoặc chữ).
+
+Yêu cầu:
+1. Nhận diện chính xác các câu hỏi, các phương án và đáp án đúng (thường được gạch chân, in đậm hoặc tô đỏ trong file).
+2. Nếu không tìm thấy đáp án đúng, hãy tự suy luận dựa trên kiến thức chuyên môn (đặc biệt là các môn Lý, Hóa, Sinh, Địa, Sử, Tin).
+3. Định dạng JSON trả về phải khớp với cấu trúc sau:
+{
+  "part1": [
+    { "id": 1, "question": "Nội dung câu hỏi...", "options": ["A. ...", "B. ...", "C. ...", "D. ..."], "answer": 0 } // answer là chỉ số 0-3
+  ],
+  "part2": [
+    { 
+      "id": 1, 
+      "question": "Nội dung câu hỏi...", 
+      "subQuestions": [
+        { "id": "a", "text": "Nội dung ý a...", "answer": true },
+        { "id": "b", "text": "Nội dung ý b...", "answer": false },
+        { "id": "c", "text": "Nội dung ý c...", "answer": true },
+        { "id": "d", "text": "Nội dung ý d...", "answer": true }
+      ]
+    }
+  ],
+  "part3": [
+    { "id": 1, "question": "Nội dung câu hỏi...", "answer": "đáp án" }
+  ]
+}
+
+Lưu ý quan trọng:
+- Nếu file có các từ "Bài 1", "Bài 2" thay vì "Câu 1", "Câu 2", hãy coi đó là các câu hỏi.
+- Loại bỏ các thông tin thừa như tiêu đề trường, lớp, tên kỳ thi ở đầu file.
+- Giữ nguyên các công thức toán học hoặc đoạn mã code nếu có.
+
+Nội dung HTML:
+${html}`;
+
+        try {
+          const response = await ai.models.generateContent({
+            model: "gemini-3-flash-preview",
+            contents: prompt,
+            config: {
+              responseMimeType: "application/json",
+              responseSchema: {
+                type: Type.OBJECT,
+                properties: {
+                  part1: {
+                    type: Type.ARRAY,
+                    items: {
+                      type: Type.OBJECT,
+                      properties: {
+                        id: { type: Type.NUMBER },
+                        question: { type: Type.STRING },
+                        options: { type: Type.ARRAY, items: { type: Type.STRING } },
+                        answer: { type: Type.NUMBER }
+                      },
+                      required: ["id", "question", "options", "answer"]
+                    }
+                  },
+                  part2: {
+                    type: Type.ARRAY,
+                    items: {
+                      type: Type.OBJECT,
+                      properties: {
+                        id: { type: Type.NUMBER },
+                        question: { type: Type.STRING },
+                        subQuestions: { 
+                          type: Type.ARRAY, 
+                          items: { 
+                            type: Type.OBJECT,
+                            properties: {
+                              id: { type: Type.STRING },
+                              text: { type: Type.STRING },
+                              answer: { type: Type.BOOLEAN }
+                            },
+                            required: ["id", "text", "answer"]
+                          } 
+                        }
+                      },
+                      required: ["id", "question", "subQuestions"]
+                    }
+                  },
+                  part3: {
+                    type: Type.ARRAY,
+                    items: {
+                      type: Type.OBJECT,
+                      properties: {
+                        id: { type: Type.NUMBER },
+                        question: { type: Type.STRING },
+                        answer: { type: Type.STRING }
+                      },
+                      required: ["id", "question", "answer"]
+                    }
+                  }
+                },
+                required: ["part1", "part2", "part3"]
+              }
+            }
+          });
+
+          return JSON.parse(response.text);
+        } catch (error) {
+          console.error("Gemini Error:", error);
+          // Fallback to manual parser if Gemini fails
+          return parseExamHTML(html);
+        }
       }
 
       window.handleFileUpload = handleFileUpload;
