@@ -1,0 +1,84 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // ===============================================================
+    // Helper Functions
+    // ===============================================================
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    function isAdmin() {
+      return isAuthenticated() && (
+        (exists(/databases/$(database)/documents/users/$(request.auth.uid)) && 
+         get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin') ||
+        (request.auth.token.email == "vietlequoc117@gmail.com" && request.auth.token.email_verified == true)
+      );
+    }
+
+    function isOwner(userId) {
+      return isAuthenticated() && request.auth.uid == userId;
+    }
+
+    function hasOnlyAllowedFields(fields) {
+      return request.resource.data.keys().hasOnly(fields);
+    }
+
+    // ===============================================================
+    // Domain Validators
+    // ===============================================================
+    function isValidUser(data) {
+      return hasOnlyAllowedFields(['role', 'email', 'name']) &&
+             data.role in ['admin', 'student'] &&
+             data.email is string &&
+             data.name is string;
+    }
+
+    function isValidExam(data) {
+      return hasOnlyAllowedFields(['adminId', 'createdAt', 'data', 'title', 'examType']) &&
+             data.adminId is string &&
+             data.createdAt is string &&
+             data.data is string && data.data.size() < 1000000 && // Max 1MB
+             data.title is string && data.title.size() < 200 &&
+             data.examType is string;
+    }
+
+    function isValidResult(data) {
+      return hasOnlyAllowedFields(['examId', 'name', 'className', 'score', 'correctP1', 'correctP2', 'correctP3', 'date', 'answers', 'examType']) &&
+             data.examId is string &&
+             data.name is string && data.name.size() < 100 &&
+             data.className is string && data.className.size() < 50 &&
+             data.score is number && data.score >= 0 &&
+             data.correctP1 is number && data.correctP1 >= 0 &&
+             data.correctP2 is number && data.correctP2 >= 0 &&
+             data.correctP3 is number && data.correctP3 >= 0 &&
+             data.date is string &&
+             data.answers is map &&
+             data.examType is string;
+    }
+
+    // ===============================================================
+    // Rules
+    // ===============================================================
+    match /users/{userId} {
+      allow read: if isOwner(userId) || isAdmin();
+      allow create: if isOwner(userId) && isValidUser(request.resource.data) && (request.resource.data.role == 'student' || isAdmin());
+      allow update: if isOwner(userId) && isValidUser(request.resource.data) && (request.resource.data.role == resource.data.role || isAdmin());
+    }
+
+    match /exams/{examId} {
+      allow read: if true; // Allow anyone to read exams for taking them
+      allow create: if isAdmin() && isValidExam(request.resource.data) && request.resource.data.adminId == request.auth.uid;
+      allow update: if isAdmin() && isValidExam(request.resource.data) && request.resource.data.adminId == resource.data.adminId;
+      allow delete: if isAdmin();
+    }
+
+    match /results/{resultId} {
+      allow read: if isAdmin();
+      allow create: if isValidResult(request.resource.data);
+      allow update: if false; // Results are immutable
+      allow delete: if isAdmin();
+    }
+  }
+}

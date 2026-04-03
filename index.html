@@ -1,0 +1,1888 @@
+<!doctype html>
+<html lang="vi">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Hệ thống thi trực tuyến</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+      @import url("https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap");
+      body {
+        font-family: "Inter", sans-serif;
+      }
+
+      /* Custom radio button styles */
+      .radio-custom:checked + div {
+        border-color: #3b82f6;
+        background-color: #eff6ff;
+      }
+      .radio-custom:checked + div .radio-inner {
+        background-color: #3b82f6;
+        border-color: #3b82f6;
+      }
+      .radio-inner {
+        transition: all 0.2s ease;
+      }
+    </style>
+  </head>
+  <body class="bg-gray-50 text-gray-800">
+    <div id="app"></div>
+    <div id="modal-container"></div>
+
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/mammoth/1.6.0/mammoth.browser.min.js"></script>
+    <script type="module">
+      import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-app.js";
+      import { getAuth, signInWithPopup, GoogleAuthProvider, onAuthStateChanged, signOut } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-auth.js";
+      import { getFirestore, collection, addDoc, getDoc, getDocs, doc, setDoc, query, where, orderBy, deleteDoc, onSnapshot } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js";
+
+      const firebaseConfig = {
+        projectId: "gen-lang-client-0573885621",
+        appId: "1:928338335862:web:78ca7e8917da7883b92757",
+        apiKey: "AIzaSyC77xlDX4LeN_ldPNteyoRcbZNzGi0Ex_I",
+        authDomain: "gen-lang-client-0573885621.firebaseapp.com",
+        storageBucket: "gen-lang-client-0573885621.firebasestorage.app",
+        messagingSenderId: "928338335862"
+      };
+
+      const app = initializeApp(firebaseConfig);
+      const auth = getAuth(app);
+      const db = getFirestore(app, "ai-studio-5cf3ce3b-130b-466b-9ae9-5cf7ba3aa2ec");
+
+      window.auth = auth;
+      window.db = db;
+      window.signInWithPopup = signInWithPopup;
+      window.GoogleAuthProvider = GoogleAuthProvider;
+      window.signOut = signOut;
+      window.collection = collection;
+      window.addDoc = addDoc;
+      window.getDoc = getDoc;
+      window.getDocs = getDocs;
+      window.doc = doc;
+      window.setDoc = setDoc;
+      window.query = query;
+      window.where = where;
+      window.orderBy = orderBy;
+      window.deleteDoc = deleteDoc;
+      window.onSnapshot = onSnapshot;
+
+      function showAlert(message, callback = null) {
+        const container = document.getElementById("modal-container");
+        window._currentAlertCallback = callback;
+        container.innerHTML = `
+                <div class="fixed inset-0 bg-black bg-opacity-50 z-[100] flex items-center justify-center p-4">
+                    <div class="bg-white rounded-xl shadow-2xl max-w-sm w-full p-6 transform transition-all">
+                        <div class="text-center">
+                            <div class="mx-auto flex items-center justify-center h-12 w-12 rounded-full bg-blue-100 mb-4">
+                                <svg class="h-6 w-6 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>
+                            </div>
+                            <h3 class="text-lg leading-6 font-medium text-gray-900 mb-2">Thông báo</h3>
+                            <div class="mt-2 px-2 text-sm text-gray-500 whitespace-pre-line">${message}</div>
+                        </div>
+                        <div class="mt-6 text-center">
+                            <button onclick="closeModal(); if(window._currentAlertCallback) window._currentAlertCallback();" class="w-full inline-flex justify-center rounded-lg border border-transparent shadow-sm px-4 py-2 bg-blue-600 text-base font-medium text-white hover:bg-blue-700 focus:outline-none sm:text-sm transition-colors">
+                                Đóng
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            `;
+      }
+
+      function showConfirm(message, onConfirm) {
+        const container = document.getElementById("modal-container");
+        // Store the callback in a global variable to be called from the inline onclick
+        window._currentConfirmCallback = onConfirm;
+        container.innerHTML = `
+                <div class="fixed inset-0 bg-black bg-opacity-50 z-[100] flex items-center justify-center p-4">
+                    <div class="bg-white rounded-xl shadow-2xl max-w-sm w-full p-6 transform transition-all">
+                        <div class="text-center">
+                            <div class="mx-auto flex items-center justify-center h-12 w-12 rounded-full bg-yellow-100 mb-4">
+                                <svg class="h-6 w-6 text-yellow-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"></path></svg>
+                            </div>
+                            <h3 class="text-lg leading-6 font-medium text-gray-900 mb-2">Xác nhận</h3>
+                            <div class="mt-2 px-2 text-sm text-gray-500 whitespace-pre-line">${message}</div>
+                        </div>
+                        <div class="mt-6 flex gap-3">
+                            <button onclick="closeModal()" class="w-full inline-flex justify-center rounded-lg border border-gray-300 shadow-sm px-4 py-2 bg-white text-base font-medium text-gray-700 hover:bg-gray-50 focus:outline-none sm:text-sm transition-colors">
+                                Hủy
+                            </button>
+                            <button onclick="closeModal(); if(window._currentConfirmCallback) window._currentConfirmCallback();" class="w-full inline-flex justify-center rounded-lg border border-transparent shadow-sm px-4 py-2 bg-blue-600 text-base font-medium text-white hover:bg-blue-700 focus:outline-none sm:text-sm transition-colors">
+                                Đồng ý
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            `;
+      }
+
+      function closeModal() {
+        document.getElementById("modal-container").innerHTML = "";
+      }
+
+      let examData = {
+        part1: [
+          {
+            id: 1,
+            question:
+              "Câu 1: Da và niêm mạc được coi là hàng rào bảo vệ nào của cơ thể?",
+            options: [
+              "A. Hàng rào hóa học",
+              "B. Hàng rào vật lý - cơ học",
+              "C. Hàng rào sinh học",
+              "D. Hàng rào tế bào",
+            ],
+            answer: 1,
+          },
+          {
+            id: 2,
+            question:
+              "Câu 2: Hoa bồ công anh nở ra lúc sáng và cụp lại lúc chạng vạng tối thuộc kiểu",
+            options: [
+              "A. ứng động không sinh trưởng dưới tác động của nhiệt độ.",
+              "B. ứng động không sinh trưởng dưới tác động của ánh sáng.",
+              "C. ứng động sinh trưởng dưới tác động của nhiệt độ.",
+              "D. ứng động sinh trưởng dưới tác động của ánh sáng.",
+            ],
+            answer: 3,
+          },
+          {
+            id: 3,
+            question:
+              "Câu 3: Loại miễn dịch nào được hình thành sau khi cơ thể tiếp xúc với tác nhân gây bệnh (ví dụ: mắc bệnh hoặc tiêm vắc-xin)?",
+            options: [
+              "A. Miễn dịch tự nhiên",
+              "B. Miễn dịch bẩm sinh",
+              "C. Miễn dịch không đặc hiệu",
+              "D. Miễn dịch thu được (đặc hiệu)",
+            ],
+            answer: 3,
+          },
+          {
+            id: 4,
+            question:
+              "Câu 4: Nếu một người bị suy gan nặng, khả năng nào sau đây của cơ thể trong cân bằng nội môi bị ảnh hưởng nghiêm trọng nhất?",
+            options: [
+              "A. Điều hòa nồng độ glucose trong máu.",
+              "B. Bài tiết các sản phẩm phân hủy chứa nitơ như urê.",
+              "C. Lọc máu và tạo nước tiểu đầu.",
+              "D. Điều hòa thân nhiệt bằng thoát mồ hôi.",
+            ],
+            answer: 1,
+          },
+          {
+            id: 5,
+            question: "Câu 5: Hai kiểu hướng động chính ở thực vật là:",
+            options: [
+              "A. Hướng động dương (hướng tới nguồn kích thích) và hướng động âm (tránh xa nguồn kích thích).",
+              "B. Hướng động nhanh và hướng động chậm.",
+              "C. Hướng động bậc 1 và hướng động bậc 2.",
+              "D. Hướng động sơ cấp và hướng động thứ cấp.",
+            ],
+            answer: 0,
+          },
+          {
+            id: 6,
+            question: "Câu 6: Vắc-xin có tác dụng chính là gì?",
+            options: [
+              "A. Tiêu diệt trực tiếp vi khuẩn đang gây bệnh.",
+              "B. Kích thích cơ thể sản sinh kháng thể chống bệnh mà không gây bệnh.",
+              "C. Thay thế các tế bào bạch cầu bị tổn thương.",
+              "D. Cung cấp trực tiếp kháng thể cho cơ thể.",
+            ],
+            answer: 1,
+          },
+          {
+            id: 7,
+            question:
+              'Câu 7: Trong cơ chế điều hòa cân bằng nội môi theo nguyên tắc phản hồi âm, bộ phận nào sau đây đóng vai trò là "khâu điều khiển" (trung tâm điều khiển)?',
+            options: [
+              "A. Cơ quan thụ cảm (receptor).",
+              "B. Trung ương thần kinh hoặc tuyến nội tiết.",
+              "C. Cơ quan thực hiện (effector).",
+              "D. Môi trường trong (máu, bạch huyết).",
+            ],
+            answer: 1,
+          },
+          {
+            id: 8,
+            question:
+              "Câu 8: Khi làm thí nghiệm về tính hướng tiếp xúc ở thực vật, người ta thường tiến hành trên loại cây nào và sử dụng dụng cụ gì để làm giá thể?",
+            options: [
+              "A. Cây lúa - dùng dây kẽm.",
+              "B. Cây đậu xanh - dùng chậu đất.",
+              "C. Cây mướp, cây bầu - dùng que tre hoặc giàn leo.",
+              "D. Cây trinh nữ - dùng đèn chiếu sáng.",
+            ],
+            answer: 2,
+          },
+          {
+            id: 9,
+            question:
+              "Câu 9: Tại sao hàng rào da lại được coi là tuyến phòng thủ đầu tiên và quan trọng của hệ miễn dịch?",
+            options: [
+              "A. Vì da có chứa nhiều tế bào lympho B.",
+              "B. Vì da tiết ra kháng thể đặc hiệu.",
+              "C. Vì da ngăn cản sự xâm nhập vật lý của phần lớn vi sinh vật.",
+              "D. Vì da có khả năng thực bào rất mạnh.",
+            ],
+            answer: 2,
+          },
+          {
+            id: 10,
+            question:
+              "Câu 10: Một nhà vườn trồng hai khóm hoa hướng dương ở hai khu vực khác nhau. Khóm A được trồng ở nơi có ánh sáng chiếu từ một phía. Khóm B được trồng trong nhà kính có hệ thống đèn chiếu sáng nhân tạo luân phiên thay đổi vị trí liên tục. Sau một thời gian, hiện tượng gì sẽ xảy ra?",
+            options: [
+              "A. Cả hai khóm đều hướng về một phía như nhau.",
+              "B. Khóm A ngọn cây hướng về phía ánh sáng, khóm B ngọn cây vẫn mọc thẳng.",
+              "C. Khóm A ngọn cây hướng về phía ánh sáng, khóm B ngọn cây mọc cong queo bất thường.",
+              "D. Khóm A ngọn cây vẫn mọc thẳng, khóm B ngọn",
+            ],
+            answer: 1,
+          },
+          {
+            id: 11,
+            question:
+              "Câu 11: Khi một người bị rắn độc cắn, bác sĩ thường chỉ định tiêm huyết thanh kháng nọc rắn. Biện pháp này liên quan đến cơ chế miễn dịch nào?",
+            options: [
+              "A. Miễn dịch tế bào do tế bào lympho T đảm nhiệm.",
+              "B. Miễn dịch dịch thể, cung cấp sẵn kháng thể từ bên ngoài.",
+              "C. Miễn dịch bẩm sinh qua cơ chế thực bào.",
+              "D. Miễn dịch chủ động do cơ thể tự sản sinh kháng thể.",
+            ],
+            answer: 1,
+          },
+          {
+            id: 12,
+            question:
+              "Câu 12: Khi trồng cây đậu xanh trong chậu và đặt chậu nằm ngang ở nơi có đủ độ ẩm, sau vài ngày, người ta quan sát thấy rễ cây mọc cong xuống đất và thân cây mọc cong lên. Giải thích nào sau đây là chính xác nhất về hiện tượng này?",
+            options: [
+              "A. Do thân và rễ đều có tính hướng đất dương nhưng thân yếu hơn nên vẫn vươn lên.",
+              "B. Do tác động riêng rẽ của trọng lực làm auxin tập trung ở mặt dưới, kích thích rễ sinh trưởng và ức chế thân sinh trưởng.",
+              "C. Do sự phân bố lại auxin không đều dưới tác động của trọng lực: mặt dưới có nồng độ auxin cao hơn, kích thích thân sinh trưởng mạnh nhưng lại ức chế rễ sinh trưởng.",
+              "D. Do rễ có tính hướng nước dương nên mọc xuống dưới để tìm nước, thân có tính hướng sáng dương nên mọc lên trên.",
+            ],
+            answer: 2,
+          },
+          {
+            id: 13,
+            question:
+              "Câu 13: Trong cơ chế điều hòa nồng độ glucose máu, insulin không thực hiện chức năng nào sau đây?",
+            options: [
+              "A. Kích thích tế bào cơ và mỡ tăng nhận và sử dụng glucose.",
+              "B. Ức chế gan chuyển glycogen dự trữ thành glucose.",
+              "C. Tăng cường quá trình phân giải protein để tạo năng lượng thay thế.",
+              "D. Thúc đẩy chuyển glucose thừa thành glycogen dự trữ tại gan và cơ.",
+            ],
+            answer: 2,
+          },
+          {
+            id: 14,
+            question:
+              'Câu 14: Hiện tượng "sốt" khi cơ thể bị nhiễm trùng có thể được coi là một phần của phản ứng miễn dịch vì:',
+            options: [
+              "A. Nhiệt độ cao trực tiếp tiêu diệt hết mầm bệnh.",
+              "B. Nhiệt độ cao ức chế sự phát triển của nhiều vi sinh vật và tăng cường hoạt động của các tế bào miễn dịch.",
+              "C. Sốt là dấu hiệu cho thấy hệ thần kinh đang bị tổn thương.",
+              "D. Sốt làm tăng quá trình thực bào của hồng cầu.",
+            ],
+            answer: 1,
+          },
+          {
+            id: 15,
+            question:
+              "Câu 15: Trẻ sơ sinh thường được bú sữa non của mẹ trong những ngày đầu đời. Sữa non rất giàu kháng thể (IgA). Điều này mang lại cho trẻ loại miễn dịch gì?",
+            options: [
+              "A. Miễn dịch chủ động, lâu dài.",
+              "B. Miễn dịch thụ động, tạm thời.",
+              "C. Miễn dịch đặc hiệu qua trung gian tế bào T.",
+              "D. Miễn dịch bẩm sinh không đặc hiệu.",
+            ],
+            answer: 1,
+          },
+          {
+            id: 16,
+            question:
+              "Câu 16: Trong một vụ dịch bệnh do virus mới gây ra, sau khoảng 2 tuần, tỷ lệ người có kháng thể đặc hiệu chống lại virus trong cộng đồng tăng lên đáng kể mặc dù chỉ có một số ít người được tiêm vắc-xin. Hiện tượng này giải thích chính xác nhất là do:",
+            options: [
+              "A. Vắc-xin tạo được miễn dịch cộng đồng rất nhanh.",
+              "B. Hệ miễn dịch không đặc hiệu của con người hoạt động hiệu quả.",
+              "C. Có sự lây nhiễm tự nhiên và đáp ứng miễn dịch đặc hiệu ở phần lớn quần thể.",
+              "D. Virus đột biến và trở nên yếu đi, dễ bị tiêu diệt.",
+            ],
+            answer: 2,
+          },
+          {
+            id: 17,
+            question:
+              "Câu 17: Nếu theo dõi nước tiểu của một người bị mất nhiều mồ hôi do lao động nặng nhưng không được bù đủ nước, kết quả nào sau đây là dễ quan sát thấy nhất?",
+            options: [
+              "A. Nước tiểu rất loãng, màu nhạt và số lượng lớn.",
+              "B. Nước tiểu cô đặc, màu vàng sậm và số lượng ít.",
+              "C. Nước tiểu có lẫn nhiều hồng cầu và protein.",
+              "D. Lượng đường trong nước tiểu tăng cao bất thường.",
+            ],
+            answer: 1,
+          },
+          {
+            id: 18,
+            question:
+              "Câu 18: Bệnh nhân tiểu đường type 1 do tuyến tụy không sản xuất đủ insulin. Ngoài việc đường huyết cao, một triệu chứng nguy hiểm khác có thể xảy ra là nhiễm toan ceton (máu có tính axit). Giải thích nào sau đây cho hiện tượng này là hợp lý nhất?",
+            options: [
+              "A. Thận bị tổn thương không bài tiết được ion H⁺, gây tích tụ axit.",
+              "B. Cơ thể thiếu insulin nên không sử dụng được glucose, phải phân giải mỡ mạnh để lấy năng lượng, sinh ra các axit thể ceton (ketone) tích tụ trong máu.",
+              "C. Tuyến thượng thận tăng tiết aldosterone quá mức, làm mất cân bằng điện giải.",
+              "D. Phổi bị suy giảm chức năng, không thải đủ CO₂ (một dạng axit bay hơi) ra ngoài.",
+            ],
+            answer: 1,
+          },
+        ],
+        part2: [
+          {
+            id: 1,
+            question:
+              "Câu 1: Trong một thí nghiệm nghiên cứu về đáp ứng miễn dịch, các nhà khoa học tiêm một loại kháng nguyên lạ vào cơ thể thỏ. Sau một thời gian, trong huyết thanh của thỏ xuất hiện một lượng lớn kháng thể đặc hiệu chống lại kháng nguyên đó. Dựa trên kiến thức về miễn dịch, hãy xem xét các phát biểu sau:",
+            subQuestions: [
+              {
+                id: "a",
+                text: "a) Đây là một ví dụ về đáp ứng miễn dịch dịch thể.",
+                answer: true,
+              },
+              {
+                id: "b",
+                text: "b) Loại miễn dịch được hình thành trong thí nghiệm này là miễn dịch đặc hiệu chủ động nhân tạo.",
+                answer: true,
+              },
+              {
+                id: "c",
+                text: "c) Các tế bào chịu trách nhiệm chính trong việc sản xuất ra kháng thể này là các tế bào lympho T độc (TCD8+).",
+                answer: false,
+              },
+              {
+                id: "d",
+                text: "d) Nếu tiêm nhắc lại cùng loại kháng nguyên đó, lượng kháng thể trong huyết thanh thỏ sẽ tăng lên nhanh hơn và cao hơn nhiều so với lần tiêm đầu tiên.",
+                answer: true,
+              },
+            ],
+          },
+          {
+            id: 2,
+            question:
+              "Câu 2: Một học sinh làm thí nghiệm về tính hướng tiếp xúc ở thực vật. Bạn trồng 3 cây mướp đất trong 3 chậu riêng biệt.\n- Chậu 1: cắm một que tre cạnh cây.\n- Chậu 2: để cây tự nhiên không có giá thể.\n- Chậu 3: cắm một que tre nhưng thường xuyên xoay hướng của que.\nSau 2 tuần, bạn quan sát thấy cây ở chậu 1 có tua cuốn quấn chặt vào que tre, cây ở chậu 2 không có tua cuốn, cây ở chậu 3 có tua cuốn nhưng quấn lỏng lẻo và không ổn định. Mỗi nhận định sau đây đúng hay sai?",
+            subQuestions: [
+              {
+                id: "a",
+                text: "a) Thí nghiệm trên chứng minh tính hướng tiếp xúc ở cây mướp.",
+                answer: true,
+              },
+              {
+                id: "b",
+                text: "b) Cây ở chậu 2 không có tua cuốn vì không được cung cấp đủ nước.",
+                answer: false,
+              },
+              {
+                id: "c",
+                text: "c) Ở chậu 3, tua cuốn quấn lỏng lẻo là do giá thể thay đổi hướng liên tục, cây không có đủ thời gian để phản ứng ổn định.",
+                answer: true,
+              },
+              {
+                id: "d",
+                text: "d) Tua cuốn của cây mướp chỉ quấn khi tiếp xúc với giá thể cứng và nhám, không quấn vào giá thể trơn nhẵn.",
+                answer: false,
+              },
+            ],
+          },
+          {
+            id: 3,
+            question:
+              "Câu 3: Trong một thí nghiệm kiểm tra khả năng điều hòa đường huyết, người ta theo dõi nồng độ glucose trong máu và sự bài tiết hormone của một bệnh nhân sau khi uống 75g glucose. Căn cứ vào bảng số liệu, hãy cho biết các nhận định sau đúng hay sai?",
+            subQuestions: [
+              {
+                id: "a",
+                text: "a) Khi glucose máu tăng cao nhất (phút 30), nồng độ insulin cũng đạt đỉnh và glucagon giảm thấp nhất, phản ánh cơ chế điều hòa ngược để hạ đường huyết.",
+                answer: true,
+              },
+              {
+                id: "b",
+                text: "b) Sự biến đổi nồng độ insulin và glucagon qua các thời điểm là đồng pha (cùng tăng, cùng giảm) vì cả hai đều do tuyến tụy sản xuất.",
+                answer: false,
+              },
+              {
+                id: "c",
+                text: "c) Đến phút 120, các chỉ số gần trở về mức ban đầu, chứng tỏ hệ thống điều hòa đường huyết của bệnh nhân này hoạt động hiệu quả.",
+                answer: true,
+              },
+              {
+                id: "d",
+                text: "d) Nếu bệnh nhân này bị bệnh tiểu đường type 1 (thiếu insulin), đường huyết ở phút 120 có thể vẫn ở mức rất cao (ví dụ >10 mmol/L) và glucagon có thể tăng cao hơn mức bình thường do không bị ức chế bởi insulin.",
+                answer: true,
+              },
+            ],
+          },
+          {
+            id: 4,
+            question:
+              "Câu 4: Khi một con chuột bị nhiễm virus cúm, cơ thể nó sẽ huy động hàng loạt các cơ chế bảo vệ từ không đặc hiệu đến đặc hiệu để chống lại tác nhân gây bệnh này. Hãy cho biết các mô tả sau về quá trình đó là đúng hay sai.",
+            subQuestions: [
+              {
+                id: "a",
+                text: "a) Ngay khi virus xâm nhập, các tế bào nhiễm virus có thể tiết ra interferon, một loại protein có vai trò ức chế sự nhân lên của virus và bảo vệ các tế bào lân cận. Đây là một thành phần của miễn dịch không đặc hiệu.",
+                answer: true,
+              },
+              {
+                id: "b",
+                text: "b) Các tế bào diệt tự nhiên (NK) có khả năng nhận diện và tiêu diệt các tế bào của cơ thể đã bị nhiễm virus. Hoạt động này thuộc về đáp ứng miễn dịch tế bào.",
+                answer: true,
+              },
+              {
+                id: "c",
+                text: "c) Kháng thể do tế bào lympho B sản xuất có thể trực tiếp bắt giữ và tiêu diệt virus cúm đang tồn tại tự do trong máu, nhưng không có tác dụng với virus đã xâm nhập vào trong tế bào.",
+                answer: true,
+              },
+              {
+                id: "d",
+                text: "d) Tế bào lympho T hỗ trợ (TCD4+) không tham gia vào đáp ứng chống virus cúm vì vai trò chính của chúng là kích hoạt đáp ứng miễn dịch chống vi khuẩn.",
+                answer: false,
+              },
+            ],
+          },
+        ],
+        part3: [
+          {
+            id: 1,
+            question:
+              "Câu 1: Một người tiêm phòng vaccine có chứa kháng nguyên đã được làm yếu đi. Sau đó, cơ thể hình thành miễn dịch. Nếu người này tiếp xúc với tác nhân gây bệnh thật sau 1 năm, sẽ có bao nhiêu loại tế bào chủ yếu tham gia vào đáp ứng miễn dịch thứ phát?",
+            answer: "2",
+          },
+          {
+            id: 2,
+            question:
+              "Câu 2. Cho các trường hợp: sau khi ăn, uống nước ngọt, uống nhiều nước, bệnh tiểu đường, khi đói. Có bao nhiêu trường hợp có lượng đường trong máu tăng cao?",
+            answer: "3",
+          },
+          {
+            id: 3,
+            question:
+              "Câu 3. Cho các đáp ứng: sốt, viêm, dị ứng, thực bào và tiết interferon. Có bao nhiêu đáp ứng là đáp ứng của miễn dịch không đặc hiệu?",
+            answer: "4",
+          },
+          {
+            id: 4,
+            question:
+              "Câu 4: Một học sinh làm thí nghiệm: trồng 3 chậu cây non cùng loài, cùng kích thước.\n- Chậu 1 đặt trong tối hoàn toàn.\n- Chậu 2 đặt ở cửa sổ có ánh sáng chiếu từ một phía.\n- Chậu 3 đặt trong phòng có ánh sáng đều từ mọi phía.\nHỏi có bao nhiêu chậu cây có hiện tượng ngọn cây mọc thẳng đứng?",
+            answer: "2",
+          },
+          {
+            id: 5,
+            question:
+              "Câu 5. Cho các tế bào: hồng cầu, tiểu cầu, bạch cầu trung tính và đại thực bào. Có bao nhiêu tế bào có khả năng thực bào?",
+            answer: "2",
+          },
+          {
+            id: 6,
+            question:
+              "Câu 6. Sơ đồ về gan điều hòa glucose trong máu như sau: Vị trí số mấy trên sơ đồ chỉ áp suất thẩm thấu máu được đều chỉnh tăng (đường huyết tăng) để ổn định?",
+            answer: "4",
+          },
+        ],
+      };
+
+      let state = {
+        screen: "role_selection",
+        student: { name: "", className: "", uid: "" },
+        answers: {
+          part1: {},
+          part2: {},
+          part3: {},
+        },
+        timeLeft: 3600, // 60 minutes
+        timerInterval: null,
+        score: 0,
+        results: null,
+        examId: null,
+        examData: examData,
+        isAdmin: false,
+        user: null,
+        allResults: []
+      };
+
+      function render() {
+        const app = document.getElementById("app");
+        if (state.screen === "role_selection") {
+          app.innerHTML = renderRoleSelection();
+        } else if (state.screen === "enter_exam_id") {
+          app.innerHTML = renderEnterExamId();
+        } else if (state.screen === "admin_login") {
+          app.innerHTML = renderAdminLogin();
+        } else if (state.screen === "admin_dashboard") {
+          app.innerHTML = renderAdminDashboard();
+        } else if (state.screen === "admin_results") {
+          app.innerHTML = renderAdminResults();
+        } else if (state.screen === "login") {
+          app.innerHTML = renderLogin();
+        } else if (state.screen === "exam") {
+          app.innerHTML = renderExam();
+          updateTimerDisplay();
+        } else if (state.screen === "result") {
+          app.innerHTML = renderResult();
+        }
+      }
+
+      function renderEnterExamId() {
+        return `
+                <div class="min-h-screen flex items-center justify-center bg-blue-50 px-4">
+                    <div class="bg-white p-8 rounded-2xl shadow-xl max-w-md w-full border border-blue-100">
+                        <div class="mb-6">
+                            <button onclick="setScreen('role_selection')" class="text-gray-500 hover:text-gray-800 flex items-center text-sm font-medium transition">
+                                <svg class="w-4 h-4 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 19l-7-7m0 0l7-7m-7 7h18"></path></svg>
+                                Quay lại
+                            </button>
+                        </div>
+                        <div class="text-center mb-8">
+                            <div class="bg-blue-100 w-16 h-16 rounded-full flex items-center justify-center mx-auto mb-4">
+                                <svg class="w-8 h-8 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 7a2 2 0 012 2m4 0a6 6 0 01-7.743 5.743L11 17H9v2H7v2H4a1 1 0 01-1-1v-2.586a1 1 0 01.293-.707l5.964-5.964A6 6 0 1121 9z"></path></svg>
+                            </div>
+                            <h1 class="text-2xl font-bold text-gray-800">NHẬP MÃ BÀI THI</h1>
+                            <p class="text-gray-500 mt-2 text-sm">Vui lòng nhập mã bài thi do giáo viên cung cấp</p>
+                        </div>
+                        <div class="space-y-5">
+                            <div>
+                                <label class="block text-sm font-semibold text-gray-700 mb-1.5">Mã bài thi</label>
+                                <input type="text" id="inputExamId" class="w-full px-4 py-3 border border-gray-300 rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition" placeholder="Ví dụ: abc123xyz">
+                            </div>
+                            <button onclick="verifyExamId()" class="w-full bg-blue-600 text-white font-bold py-3.5 rounded-xl hover:bg-blue-700 transition duration-200 shadow-md hover:shadow-lg transform hover:-translate-y-0.5 mt-4">
+                                TIẾP TỤC
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            `;
+      }
+
+      async function verifyExamId() {
+        const examId = document.getElementById("inputExamId").value.trim();
+        if (!examId) {
+          showAlert("Vui lòng nhập mã bài thi!");
+          return;
+        }
+
+        try {
+          const docRef = window.doc(window.db, "exams", examId);
+          const docSnap = await window.getDoc(docRef);
+          if (docSnap.exists()) {
+            state.examId = examId;
+            state.examData = JSON.parse(docSnap.data().data);
+            setScreen('login');
+          } else {
+            showAlert("Mã bài thi không hợp lệ hoặc không tồn tại!");
+          }
+        } catch (error) {
+          console.error("Error fetching exam:", error);
+          showAlert("Lỗi khi kiểm tra mã bài thi. Vui lòng thử lại.");
+        }
+      }
+
+      window.verifyExamId = verifyExamId;
+
+      function setScreen(screenName) {
+        state.screen = screenName;
+        render();
+        window.scrollTo(0, 0);
+      }
+
+      window.setScreen = setScreen;
+      window.render = render;
+      window.showAlert = showAlert;
+      window.showConfirm = showConfirm;
+      window.closeModal = closeModal;
+
+      function renderRoleSelection() {
+        return `
+                <div class="min-h-screen flex items-center justify-center bg-blue-50 px-4">
+                    <div class="bg-white p-8 rounded-2xl shadow-xl max-w-md w-full border border-blue-100 text-center">
+                        <div class="bg-blue-100 w-16 h-16 rounded-full flex items-center justify-center mx-auto mb-4">
+                            <svg class="w-8 h-8 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5c1.747 0 3.332.477 4.5 1.253v13C19.832 18.477 18.247 18 16.5 18c-1.746 0-3.332.477-4.5 1.253"></path></svg>
+                        </div>
+                        <h1 class="text-2xl font-bold text-gray-800 mb-6">HỆ THỐNG THI TRỰC TUYẾN</h1>
+                        <p class="text-gray-500 mb-8">Vui lòng chọn chế độ đăng nhập</p>
+                        
+                        <div class="space-y-4">
+                            <button onclick="studentLoginClick()" class="w-full bg-blue-600 text-white font-bold py-4 rounded-xl hover:bg-blue-700 transition duration-200 shadow-md flex items-center justify-center">
+                                <svg class="w-6 h-6 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 14l9-5-9-5-9 5 9 5z"></path><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 14l6.16-3.422a12.083 12.083 0 01.665 6.479A11.952 11.952 0 0012 20.055a11.952 11.952 0 00-6.824-2.998 12.078 12.078 0 01.665-6.479L12 14z"></path><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 14l9-5-9-5-9 5 9 5zm0 0l6.16-3.422a12.083 12.083 0 01.665 6.479A11.952 11.952 0 0012 20.055a11.952 11.952 0 00-6.824-2.998 12.078 12.078 0 01.665-6.479L12 14zm-4 6v-7.5l4-2.222"></path></svg>
+                                HỌC SINH ĐĂNG NHẬP
+                            </button>
+                            <button onclick="adminLoginClick()" class="w-full bg-gray-800 text-white font-bold py-4 rounded-xl hover:bg-gray-900 transition duration-200 shadow-md flex items-center justify-center">
+                                <svg class="w-6 h-6 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"></path><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"></path></svg>
+                                QUẢN TRỊ VIÊN (ADMIN)
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            `;
+      }
+
+      function studentLoginClick() {
+        setScreen("enter_exam_id");
+      }
+
+      async function adminLoginClick() {
+        try {
+          const provider = new GoogleAuthProvider();
+          const result = await signInWithPopup(auth, provider);
+          const user = result.user;
+          
+          // Check if admin
+          const userDoc = await getDoc(doc(db, "users", user.uid));
+          let isAdmin = false;
+          
+          if (userDoc.exists() && userDoc.data().role === 'admin') {
+            isAdmin = true;
+          } else if (user.email === "vietlequoc117@gmail.com" && user.emailVerified) {
+            isAdmin = true;
+            // Bootstrap admin
+            await setDoc(doc(db, "users", user.uid), {
+              role: 'admin',
+              email: user.email,
+              name: user.displayName
+            });
+          }
+          
+          if (isAdmin) {
+            state.isAdmin = true;
+            state.user = user;
+            fetchAdminExams();
+          } else {
+            showAlert("Tài khoản của bạn không có quyền Quản trị viên.");
+            signOut(auth);
+          }
+        } catch (error) {
+          console.error(error);
+          showAlert("Lỗi đăng nhập: " + error.message);
+        }
+      }
+
+      window.studentLoginClick = studentLoginClick;
+      window.adminLoginClick = adminLoginClick;
+
+      async function fetchAdminExams() {
+        try {
+          const q = query(collection(db, "exams"), where("adminId", "==", state.user.uid), orderBy("createdAt", "desc"));
+          const snapshot = await getDocs(q);
+          state.adminExams = [];
+          snapshot.forEach(doc => {
+            state.adminExams.push({ id: doc.id, ...doc.data() });
+          });
+          setScreen("admin_dashboard");
+        } catch (error) {
+          console.error(error);
+          showAlert("Lỗi tải danh sách đề thi: " + error.message);
+        }
+      }
+
+      function renderAdminLogin() {
+        return ''; // Not used anymore, replaced by Google Sign-In
+      }
+
+      function loginAdmin() {
+        // Not used anymore
+      }
+
+      function renderAdminDashboard() {
+        let html = `
+                <div class="min-h-screen bg-gray-50 pb-24">
+                    <div class="bg-gray-800 text-white shadow-md">
+                        <div class="max-w-6xl mx-auto px-4 py-4 flex justify-between items-center">
+                            <div class="flex items-center">
+                                <svg class="w-6 h-6 mr-2 text-blue-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 17v-2m3 2v-4m3 4v-6m2 10H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path></svg>
+                                <h1 class="text-xl font-bold">Bảng Điều Khiển Admin</h1>
+                            </div>
+                            <button onclick="signOut(auth).then(() => setScreen('role_selection'))" class="text-gray-300 hover:text-white text-sm font-medium transition flex items-center">
+                                <svg class="w-4 h-4 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1"></path></svg>
+                                Đăng xuất
+                            </button>
+                        </div>
+                    </div>
+                    
+                    <div class="max-w-6xl mx-auto px-4 py-8">
+                        <!-- Vercel Domain Setting -->
+                        <div class="bg-white rounded-xl shadow-sm border border-gray-200 p-5 mb-6 flex flex-col sm:flex-row items-start sm:items-center justify-between">
+                            <div>
+                                <h3 class="text-lg font-bold text-gray-800">Cài đặt tên miền chia sẻ (Vercel)</h3>
+                                <p class="text-gray-500 text-sm mt-1">Nhập tên miền Vercel của bạn để tạo link thi nhanh cho học sinh (không cần đăng nhập Gmail).</p>
+                            </div>
+                            <div class="mt-4 sm:mt-0 w-full sm:w-auto flex">
+                                <input type="text" id="vercelDomain" placeholder="VD: https://my-app.vercel.app" class="px-4 py-2 border border-gray-300 rounded-l-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none w-full sm:w-64" value="${localStorage.getItem('vercelDomain') || ''}">
+                                <button onclick="saveVercelDomain()" class="bg-blue-600 text-white px-4 py-2 rounded-r-lg font-medium hover:bg-blue-700 transition">Lưu</button>
+                            </div>
+                        </div>
+
+                        <div class="flex justify-between items-end mb-6">
+                            <div>
+                                <h2 class="text-2xl font-bold text-gray-800">Danh sách đề thi</h2>
+                                <p class="text-gray-500 mt-1">Tổng số đề thi: <span class="font-bold text-blue-600">${state.adminExams ? state.adminExams.length : 0}</span></p>
+                            </div>
+                            <div class="flex space-x-3">
+                                <button onclick="fetchAdminExams()" class="bg-white border border-gray-300 text-gray-700 px-4 py-2 rounded-lg font-medium hover:bg-gray-50 transition shadow-sm flex items-center">
+                                    <svg class="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"></path></svg>
+                                    Cập nhật
+                                </button>
+                                <select id="examTypeSelect" class="bg-white border border-gray-300 text-gray-700 px-4 py-2 rounded-lg font-medium shadow-sm outline-none focus:ring-2 focus:ring-indigo-500">
+                                    <option value="1">Loại 1 (Tin, Sử, KTPL...)</option>
+                                    <option value="2">Loại 2 (Lý, Hoá, Sinh, Địa)</option>
+                                </select>
+                                <input type="file" id="docxUpload" accept=".docx" class="hidden" onchange="handleFileUpload(event)">
+                                <button onclick="document.getElementById('docxUpload').click()" class="bg-indigo-600 text-white px-4 py-2 rounded-lg font-medium hover:bg-indigo-700 transition shadow-sm flex items-center">
+                                    <svg class="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12"></path></svg>
+                                    Tải lên đề thi (DOCX)
+                                </button>
+                            </div>
+                        </div>
+
+                        <div class="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
+                            <div class="overflow-x-auto">
+                                <table class="w-full text-left border-collapse">
+                                    <thead>
+                                        <tr class="bg-gray-50 border-b border-gray-200">
+                                            <th class="py-3 px-4 text-xs font-semibold text-gray-500 uppercase tracking-wider">STT</th>
+                                            <th class="py-3 px-4 text-xs font-semibold text-gray-500 uppercase tracking-wider">Tên đề thi</th>
+                                            <th class="py-3 px-4 text-xs font-semibold text-gray-500 uppercase tracking-wider">Ngày tạo</th>
+                                            <th class="py-3 px-4 text-xs font-semibold text-gray-500 uppercase tracking-wider text-center">Link thi</th>
+                                            <th class="py-3 px-4 text-xs font-semibold text-gray-500 uppercase tracking-wider text-center">Hành động</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody class="divide-y divide-gray-200">
+        `;
+
+        if (!state.adminExams || state.adminExams.length === 0) {
+          html += `
+                        <tr>
+                            <td colspan="5" class="py-8 text-center text-gray-500">
+                                <svg class="w-12 h-12 mx-auto text-gray-300 mb-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path></svg>
+                                Chưa có đề thi nào. Vui lòng tải lên file DOCX.
+                            </td>
+                        </tr>
+                    `;
+        } else {
+          state.adminExams.forEach((exam, idx) => {
+            html += `
+                        <tr class="hover:bg-gray-50 transition">
+                            <td class="py-3 px-4 text-gray-500 text-sm">${idx + 1}</td>
+                            <td class="py-3 px-4 text-gray-800 font-medium text-sm">${exam.title || 'Đề thi ' + (idx + 1)}</td>
+                            <td class="py-3 px-4 text-gray-600 text-sm">${new Date(exam.createdAt).toLocaleString('vi-VN')}</td>
+                            <td class="py-3 px-4 text-center">
+                                <button onclick="copyToClipboard('${exam.id}')" class="text-blue-600 hover:text-blue-800 text-sm font-medium">${localStorage.getItem('vercelDomain') ? 'Copy Link Thi' : 'Copy Mã Bài Thi'}</button>
+                            </td>
+                            <td class="py-3 px-4 text-center">
+                                <button onclick="viewExamResults('${exam.id}')" class="bg-blue-100 text-blue-700 hover:bg-blue-200 px-3 py-1 rounded text-sm font-medium transition">Xem kết quả</button>
+                                <button onclick="deleteExam('${exam.id}')" class="bg-red-100 text-red-700 hover:bg-red-200 px-3 py-1 rounded text-sm font-medium transition ml-2">Xóa</button>
+                            </td>
+                        </tr>
+                    `;
+          });
+        }
+
+        html += `
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            `;
+
+        return html;
+      }
+
+      function saveVercelDomain() {
+        const domain = document.getElementById('vercelDomain').value.trim();
+        if (domain) {
+          // Add https:// if missing
+          const formattedDomain = domain.startsWith('http') ? domain : 'https://' + domain;
+          localStorage.setItem('vercelDomain', formattedDomain);
+          showAlert("Đã lưu tên miền Vercel: " + formattedDomain);
+        } else {
+          localStorage.removeItem('vercelDomain');
+          showAlert("Đã xóa tên miền Vercel.");
+        }
+        render(); // Re-render to update the button text
+      }
+
+      window.saveVercelDomain = saveVercelDomain;
+
+      function copyToClipboard(examId) {
+        const vercelDomain = localStorage.getItem('vercelDomain');
+        let textToCopy = examId;
+        let alertMessage = "Đã copy mã bài thi: " + examId + "\\n\\nHãy gửi link ứng dụng (lấy từ nút Share ở góc trên bên phải của AI Studio) và mã bài thi này cho học sinh.";
+        
+        if (vercelDomain) {
+          // Clean up trailing slash
+          const cleanDomain = vercelDomain.endsWith('/') ? vercelDomain.slice(0, -1) : vercelDomain;
+          textToCopy = cleanDomain + "/?examId=" + examId;
+          alertMessage = "Đã copy link thi trực tiếp: " + textToCopy + "\\n\\nHọc sinh chỉ cần bấm vào link này là có thể làm bài ngay (không cần đăng nhập Gmail).";
+        }
+        
+        navigator.clipboard.writeText(textToCopy).then(() => {
+          showAlert(alertMessage);
+        }).catch(err => {
+          console.error('Failed to copy: ', err);
+          showAlert("Không thể copy. Vui lòng copy thủ công: " + textToCopy);
+        });
+      }
+
+      window.copyToClipboard = copyToClipboard;
+
+      async function deleteExam(examId) {
+        showConfirm("Bạn có chắc chắn muốn xóa đề thi này và toàn bộ kết quả liên quan?", async () => {
+          try {
+            await deleteDoc(doc(db, "exams", examId));
+            
+            // Delete associated results
+            const q = query(collection(db, "results"), where("examId", "==", examId));
+            const snapshot = await getDocs(q);
+            snapshot.forEach(async (docSnap) => {
+              await deleteDoc(doc(db, "results", docSnap.id));
+            });
+
+            showAlert("Đã xóa đề thi thành công.", () => {
+              fetchAdminExams();
+            });
+          } catch (error) {
+            console.error(error);
+            showAlert("Lỗi khi xóa đề thi: " + error.message);
+          }
+        });
+      }
+
+      window.deleteExam = deleteExam;
+
+      async function viewExamResults(examId) {
+        try {
+          const q = query(collection(db, "results"), where("examId", "==", examId), orderBy("date", "desc"));
+          const snapshot = await getDocs(q);
+          state.allResults = [];
+          snapshot.forEach(doc => {
+            state.allResults.push({ id: doc.id, ...doc.data() });
+          });
+          state.currentViewExamId = examId;
+          setScreen("admin_results");
+        } catch (error) {
+          console.error(error);
+          showAlert("Lỗi tải kết quả thi: " + error.message);
+        }
+      }
+
+      window.viewExamResults = viewExamResults;
+
+      function renderAdminResults() {
+        let html = `
+                <div class="min-h-screen bg-gray-50 pb-24">
+                    <div class="bg-gray-800 text-white shadow-md">
+                        <div class="max-w-6xl mx-auto px-4 py-4 flex justify-between items-center">
+                            <div class="flex items-center">
+                                <button onclick="setScreen('admin_dashboard')" class="mr-4 text-gray-300 hover:text-white">
+                                    <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 19l-7-7m0 0l7-7m-7 7h18"></path></svg>
+                                </button>
+                                <h1 class="text-xl font-bold">Kết quả thi</h1>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <div class="max-w-6xl mx-auto px-4 py-8">
+                        <div class="flex justify-between items-end mb-6">
+                            <div>
+                                <h2 class="text-2xl font-bold text-gray-800">Kết quả thi của học sinh</h2>
+                                <p class="text-gray-500 mt-1">Tổng số bài thi: <span class="font-bold text-blue-600">${state.allResults ? state.allResults.length : 0}</span></p>
+                            </div>
+                            <div class="flex space-x-3">
+                                <button onclick="viewExamResults('${state.currentViewExamId}')" class="bg-white border border-gray-300 text-gray-700 px-4 py-2 rounded-lg font-medium hover:bg-gray-50 transition shadow-sm flex items-center">
+                                    <svg class="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"></path></svg>
+                                    Cập nhật
+                                </button>
+                                <button onclick="downloadDocx()" class="bg-green-600 text-white px-4 py-2 rounded-lg font-medium hover:bg-green-700 transition shadow-sm flex items-center">
+                                    <svg class="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"></path></svg>
+                                    Tải bảng điểm (DOCX)
+                                </button>
+                            </div>
+                        </div>
+
+                        <div class="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
+                            <div class="overflow-x-auto">
+                                <table class="w-full text-left border-collapse">
+                                    <thead>
+                                        <tr class="bg-gray-50 border-b border-gray-200">
+                                            <th class="py-3 px-4 text-xs font-semibold text-gray-500 uppercase tracking-wider">STT</th>
+                                            <th class="py-3 px-4 text-xs font-semibold text-gray-500 uppercase tracking-wider">Họ và tên</th>
+                                            <th class="py-3 px-4 text-xs font-semibold text-gray-500 uppercase tracking-wider">Lớp</th>
+                                            <th class="py-3 px-4 text-xs font-semibold text-gray-500 uppercase tracking-wider text-center">Điểm số</th>
+                                            <th class="py-3 px-4 text-xs font-semibold text-gray-500 uppercase tracking-wider text-center">Phần I</th>
+                                            <th class="py-3 px-4 text-xs font-semibold text-gray-500 uppercase tracking-wider text-center">Phần II</th>
+                                            <th class="py-3 px-4 text-xs font-semibold text-gray-500 uppercase tracking-wider text-center">Phần III</th>
+                                            <th class="py-3 px-4 text-xs font-semibold text-gray-500 uppercase tracking-wider">Thời gian nộp</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody class="divide-y divide-gray-200">
+        `;
+
+        if (!state.allResults || state.allResults.length === 0) {
+          html += `
+                        <tr>
+                            <td colspan="8" class="py-8 text-center text-gray-500">
+                                <svg class="w-12 h-12 mx-auto text-gray-300 mb-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path></svg>
+                                Chưa có học sinh nào nộp bài.
+                            </td>
+                        </tr>
+                    `;
+        } else {
+          state.allResults.forEach((res, idx) => {
+            const examType = res.examType || "2";
+            const p1Total = examType === "1" ? 24 : 18;
+            const p2Total = 16;
+            const p3Total = examType === "1" ? 0 : 6;
+            const p3Display = examType === "1" ? "-" : `${res.correctP3}/${p3Total}`;
+
+            html += `
+                        <tr class="hover:bg-gray-50 transition">
+                            <td class="py-3 px-4 text-gray-500 text-sm">${idx + 1}</td>
+                            <td class="py-3 px-4 text-gray-800 font-medium text-sm">${res.name}</td>
+                            <td class="py-3 px-4 text-gray-600 text-sm">${res.className}</td>
+                            <td class="py-3 px-4 text-center">
+                                <span class="inline-flex items-center justify-center px-2.5 py-1 rounded-full text-sm font-bold ${res.score >= 8 ? "bg-green-100 text-green-700" : res.score >= 5 ? "bg-blue-100 text-blue-700" : "bg-red-100 text-red-700"}">
+                                    ${res.score}
+                                </span>
+                            </td>
+                            <td class="py-3 px-4 text-gray-600 text-sm text-center">${res.correctP1}/${p1Total}</td>
+                            <td class="py-3 px-4 text-gray-600 text-sm text-center">${res.correctP2}/${p2Total}</td>
+                            <td class="py-3 px-4 text-gray-600 text-sm text-center">${p3Display}</td>
+                            <td class="py-3 px-4 text-gray-500 text-sm">${new Date(res.date).toLocaleString('vi-VN')}</td>
+                        </tr>
+                    `;
+          });
+        }
+
+        html += `
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            `;
+
+        return html;
+      }
+
+      function handleFileUpload(event) {
+        const file = event.target.files[0];
+        if (!file) return;
+        const examType = document.getElementById("examTypeSelect").value;
+
+        const reader = new FileReader();
+        reader.onload = function (e) {
+          const arrayBuffer = e.target.result;
+          mammoth
+            .convertToHtml(
+              { arrayBuffer: arrayBuffer },
+              {
+                styleMap: ["u => u", "b => strong", "i => em", "strike => s"],
+              },
+            )
+            .then(function (result) {
+              const html = result.value;
+              const newExamData = parseExamHTML(html);
+              newExamData.examType = examType;
+
+              // Cập nhật dữ liệu đề thi
+              state.examData = newExamData;
+
+              // Reset state
+              state.answers = { part1: {}, part2: {}, part3: {} };
+              state.score = 0;
+              state.results = null;
+
+              // Save exam to Firestore
+              saveExamToFirestore(newExamData, file.name, examType);
+            })
+            .catch(function (err) {
+              console.error(err);
+              showAlert("Lỗi khi đọc file DOCX. Vui lòng thử lại.");
+            });
+        };
+        reader.readAsArrayBuffer(file);
+      }
+
+      window.handleFileUpload = handleFileUpload;
+
+      async function saveExamToFirestore(examData, fileName, examType) {
+        if (!state.isAdmin) {
+          showAlert("Bạn không có quyền tải lên đề thi.");
+          return;
+        }
+        
+        try {
+          const docRef = await addDoc(collection(db, "exams"), {
+            title: fileName.replace(/\.[^/.]+$/, ""), // Remove extension
+            data: JSON.stringify(examData),
+            adminId: state.user.uid,
+            createdAt: new Date().toISOString(),
+            examType: examType
+          });
+          
+          showAlert(`Đã tải lên và xử lý file: ${fileName}\n\nĐề thi đã được lưu thành công! ID đề thi: ${docRef.id}`, () => {
+            fetchAdminExams();
+          });
+        } catch (error) {
+          console.error("Error adding document: ", error);
+          showAlert("Lỗi khi lưu đề thi: " + error.message);
+        }
+      }
+
+      function parseExamHTML(html) {
+        const parser = new DOMParser();
+        const doc = parser.parseFromString(html, "text/html");
+
+        let newExamData = {
+          part1: [],
+          part2: [],
+          part3: [],
+        };
+
+        let blocks = [];
+        const elements = doc.body.querySelectorAll(
+          "p, h1, h2, h3, h4, h5, h6, li, td",
+        );
+        elements.forEach((el) => {
+          const hasBlockChild = Array.from(el.children).some((child) =>
+            [
+              "P",
+              "H1",
+              "H2",
+              "H3",
+              "H4",
+              "H5",
+              "H6",
+              "LI",
+              "TD",
+              "DIV",
+              "TABLE",
+              "TR",
+              "TBODY",
+            ].includes(child.tagName),
+          );
+          if (hasBlockChild) return;
+
+          const htmlParts = el.innerHTML.split(/<br\s*\/?>/i);
+          htmlParts.forEach((part) => {
+            const temp = document.createElement("div");
+            // Replace tabs with 4 spaces to preserve indentation
+            temp.innerHTML = part.replace(/\t/g, '    ');
+            // Use textContent to get the text, preserving spaces
+            let text = temp.textContent.trimEnd();
+            
+            if (text.trim()) {
+              blocks.push({ text: text, element: temp });
+            }
+          });
+        });
+
+        let currentPart = 1;
+        let currentQuestion = null;
+
+        for (let i = 0; i < blocks.length; i++) {
+          let text = blocks[i].text;
+          let el = blocks[i].element;
+
+          // Nhận diện các phần
+          const lowerText = text.toLowerCase();
+          if (lowerText.includes("phần iii") || lowerText.includes("phần 3")) {
+            currentPart = 3;
+            continue;
+          } else if (
+            lowerText.includes("phần ii") ||
+            lowerText.includes("phần 2")
+          ) {
+            currentPart = 2;
+            continue;
+          } else if (
+            lowerText.includes("phần i") ||
+            lowerText.includes("phần 1")
+          ) {
+            currentPart = 1;
+            continue;
+          }
+
+          // 1. Trường hợp dính liền Câu hỏi và Đáp án trên cùng 1 dòng
+          const inlineMatch = text.trim().match(
+            /^([Cc]âu\s*\d+[:.]\s*.*?)(A[.:)\/]\s*.*?)(B[.:)\/]\s*.*?)(C[.:)\/]\s*.*?)(D[.:)\/]\s*.*)$/,
+          );
+          if (inlineMatch && currentPart === 1) {
+            currentQuestion = {
+              id: newExamData.part1.length + 1,
+              question: inlineMatch[1].trim(),
+              options: [
+                inlineMatch[2].trim(),
+                inlineMatch[3].trim(),
+                inlineMatch[4].trim(),
+                inlineMatch[5].trim(),
+              ],
+              answer: 0,
+            };
+
+            const uTags = el.querySelectorAll(
+              'u, strong, b, span[style*="color: red"]',
+            );
+            uTags.forEach((tag) => {
+              const tagText = tag.textContent.trim();
+              if (/^A[.:)\/]?/i.test(tagText) || tagText === "A")
+                currentQuestion.answer = 0;
+              if (/^B[.:)\/]?/i.test(tagText) || tagText === "B")
+                currentQuestion.answer = 1;
+              if (/^C[.:)\/]?/i.test(tagText) || tagText === "C")
+                currentQuestion.answer = 2;
+              if (/^D[.:)\/]?/i.test(tagText) || tagText === "D")
+                currentQuestion.answer = 3;
+            });
+
+            newExamData.part1.push(currentQuestion);
+            continue;
+          }
+
+          // 2. Nhận diện câu hỏi bình thường
+          const isQuestion = /^câu\s*\d+[:.]/i.test(text.trim());
+          if (isQuestion) {
+            if (currentPart === 1) {
+              currentQuestion = {
+                id: newExamData.part1.length + 1,
+                question: text,
+                options: [],
+                answer: 0,
+              };
+              newExamData.part1.push(currentQuestion);
+            } else if (currentPart === 2) {
+              currentQuestion = {
+                id: newExamData.part2.length + 1,
+                question: text,
+                subQuestions: [],
+              };
+              newExamData.part2.push(currentQuestion);
+            } else if (currentPart === 3) {
+              currentQuestion = {
+                id: newExamData.part3.length + 1,
+                question: text,
+                answer: "",
+              };
+              newExamData.part3.push(currentQuestion);
+            }
+            continue;
+          }
+
+          // 3. Nhận diện đáp án/lựa chọn
+          if (currentQuestion) {
+            if (currentPart === 1) {
+              let isOptionLine = /^[A-D][.:)\/]/.test(text.trim());
+              if (isOptionLine) {
+                // Tách các lựa chọn nếu chúng nằm trên cùng 1 dòng
+                const parts = text
+                  .split(/(?=(?:^|\s)[A-D][.:)\/])/)
+                  .filter((p) => p.trim());
+                parts.forEach((part) => {
+                  if (/^[A-D][.:)\/]/.test(part.trim())) {
+                    currentQuestion.options.push(part.trim());
+                  }
+                });
+
+                const uTags = el.querySelectorAll(
+                  'u, strong, b, em, mark, span[style*="underline"], span[style*="bold"], span[style*="color: red"]',
+                );
+                if (uTags.length > 0) {
+                  if (parts.length === 1) {
+                    const optText = parts[0].trim();
+                    if (/^A[.:)\/]/.test(optText)) currentQuestion.answer = 0;
+                    if (/^B[.:)\/]/.test(optText)) currentQuestion.answer = 1;
+                    if (/^C[.:)\/]/.test(optText)) currentQuestion.answer = 2;
+                    if (/^D[.:)\/]/.test(optText)) currentQuestion.answer = 3;
+                  } else {
+                    uTags.forEach((tag) => {
+                      const tagText = tag.textContent.trim();
+                      if (!tagText) return;
+                      parts.forEach((part, idx) => {
+                        if (
+                          part.includes(tagText) ||
+                          tagText.includes(part.substring(0, 2))
+                        ) {
+                          if (/^A[.:)\/]/.test(part))
+                            currentQuestion.answer = 0;
+                          if (/^B[.:)\/]/.test(part))
+                            currentQuestion.answer = 1;
+                          if (/^C[.:)\/]/.test(part))
+                            currentQuestion.answer = 2;
+                          if (/^D[.:)\/]/.test(part))
+                            currentQuestion.answer = 3;
+                        }
+                      });
+                    });
+                  }
+                }
+              } else if (currentQuestion.options.length === 0) {
+                currentQuestion.question += "\n" + text;
+              }
+            } else if (currentPart === 2) {
+              const isStatement = /^[a-e][.:)\/]/i.test(text.trim());
+              if (isStatement) {
+                let isTrue =
+                  text.toLowerCase().includes("(đ)") ||
+                  text.toLowerCase().endsWith("đ") ||
+                  text.toLowerCase().includes("đúng");
+
+                const uTags = el.querySelectorAll(
+                  'u, strong, b, em, mark, span[style*="underline"], span[style*="bold"], span[style*="color: red"]',
+                );
+                if (uTags.length > 0) {
+                  isTrue = true;
+                }
+
+                const letterMatch = text.trim().match(/^([a-e])[.:)\/]\s*(.*)/i);
+                const letter = letterMatch
+                  ? letterMatch[1].toLowerCase()
+                  : String.fromCharCode(
+                      97 + currentQuestion.subQuestions.length,
+                    );
+                let cleanText = letterMatch ? letterMatch[2] : text;
+                cleanText = cleanText
+                  .replace(/\s*\([đs]\)\s*$/i, "")
+                  .replace(/\s*(đúng|sai)\s*$/i, "");
+
+                currentQuestion.subQuestions.push({
+                  id: letter,
+                  text: cleanText,
+                  answer: isTrue,
+                });
+              } else if (currentQuestion.subQuestions.length === 0) {
+                currentQuestion.question += "\n" + text;
+              }
+            } else if (currentPart === 3) {
+              if (
+                text.trim().toLowerCase().startsWith("đáp án:") ||
+                text.trim().toLowerCase().startsWith("trả lời:")
+              ) {
+                currentQuestion.answer = text
+                  .trim()
+                  .replace(/^(đáp án|trả lời):\s*/i, "")
+                  .trim();
+              } else if (!currentQuestion.answer) {
+                currentQuestion.question += "\n" + text;
+              }
+            }
+          }
+        }
+
+        // Xử lý các câu hỏi thiếu options (có thể do format lạ)
+        newExamData.part1.forEach((q) => {
+          if (q.options.length === 0) {
+            q.options = [
+              "A. Đáp án A",
+              "B. Đáp án B",
+              "C. Đáp án C",
+              "D. Đáp án D",
+            ];
+          }
+        });
+
+        // Fallback nếu không nhận diện được gì
+        if (
+          newExamData.part1.length === 0 &&
+          newExamData.part2.length === 0 &&
+          newExamData.part3.length === 0
+        ) {
+          newExamData.part1.push({
+            id: 1,
+            question:
+              "Nội dung trích xuất từ file (Không đúng chuẩn định dạng):\n" +
+              doc.body.textContent.substring(0, 300) +
+              "...",
+            options: [
+              "A. Lựa chọn 1",
+              "B. Lựa chọn 2",
+              "C. Lựa chọn 3",
+              "D. Lựa chọn 4",
+            ],
+            answer: 0,
+          });
+        }
+
+        return newExamData;
+      }
+
+      function downloadDocx() {
+        const results = state.allResults || [];
+        if (results.length === 0) {
+          showAlert("Chưa có dữ liệu để tải xuống.");
+          return;
+        }
+
+        let tableHtml = `
+                <table border="1" style="border-collapse: collapse; width: 100%; font-family: Arial, sans-serif;">
+                    <thead>
+                        <tr style="background-color: #f2f2f2;">
+                            <th>STT</th>
+                            <th>Họ và tên</th>
+                            <th>Lớp</th>
+                            <th>Điểm số</th>
+                            <th>Phần I</th>
+                            <th>Phần II</th>
+                            <th>Phần III</th>
+                            <th>Thời gian nộp</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+            `;
+
+        results.forEach((res, idx) => {
+          const examType = res.examType || "2";
+          const p1Total = examType === "1" ? 24 : 18;
+          const p2Total = 16;
+          const p3Total = examType === "1" ? 0 : 6;
+          const p3Display = examType === "1" ? "-" : `${res.correctP3}/${p3Total}`;
+
+          tableHtml += `
+                    <tr>
+                        <td style="text-align: center;">${idx + 1}</td>
+                        <td>${res.name}</td>
+                        <td style="text-align: center;">${res.className}</td>
+                        <td style="text-align: center; font-weight: bold;">${res.score}</td>
+                        <td style="text-align: center;">${res.correctP1}/${p1Total}</td>
+                        <td style="text-align: center;">${res.correctP2}/${p2Total}</td>
+                        <td style="text-align: center;">${p3Display}</td>
+                        <td style="text-align: center;">${new Date(res.date).toLocaleString('vi-VN')}</td>
+                    </tr>
+                `;
+        });
+
+        tableHtml += `
+                    </tbody>
+                </table>
+            `;
+
+        const header =
+          "<html xmlns:o='urn:schemas-microsoft-com:office:office' xmlns:w='urn:schemas-microsoft-com:office:word' xmlns='http://www.w3.org/TR/REC-html40'><head><meta charset='utf-8'><title>Danh sách điểm thi</title></head><body>";
+        const footer = "</body></html>";
+        const sourceHTML =
+          header +
+          "<h2 style='text-align: center; font-family: Arial, sans-serif;'>BẢNG ĐIỂM HỌC SINH</h2>" +
+          tableHtml +
+          footer;
+
+        const source =
+          "data:application/vnd.ms-word;charset=utf-8," +
+          encodeURIComponent(sourceHTML);
+        const fileDownload = document.createElement("a");
+        document.body.appendChild(fileDownload);
+        fileDownload.href = source;
+        fileDownload.download = "Bang_Diem_Hoc_Sinh.doc";
+        fileDownload.click();
+        document.body.removeChild(fileDownload);
+      }
+
+      function renderLogin() {
+        return `
+                <div class="min-h-screen flex items-center justify-center bg-blue-50 px-4">
+                    <div class="bg-white p-8 rounded-2xl shadow-xl max-w-md w-full border border-blue-100">
+                        <div class="mb-6">
+                            <button onclick="setScreen('role_selection')" class="text-gray-500 hover:text-gray-800 flex items-center text-sm font-medium transition">
+                                <svg class="w-4 h-4 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 19l-7-7m0 0l7-7m-7 7h18"></path></svg>
+                                Quay lại
+                            </button>
+                        </div>
+                        <div class="text-center mb-8">
+                            <div class="bg-blue-100 w-16 h-16 rounded-full flex items-center justify-center mx-auto mb-4">
+                                <svg class="w-8 h-8 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5c1.747 0 3.332.477 4.5 1.253v13C19.832 18.477 18.247 18 16.5 18c-1.746 0-3.332.477-4.5 1.253"></path></svg>
+                            </div>
+                            <h1 class="text-2xl font-bold text-gray-800">HỌC SINH ĐĂNG NHẬP</h1>
+                            <p class="text-gray-500 mt-2 text-sm">Vui lòng điền thông tin để bắt đầu làm bài</p>
+                        </div>
+                        <div class="space-y-5">
+                            <div>
+                                <label class="block text-sm font-semibold text-gray-700 mb-1.5">Họ và tên học sinh</label>
+                                <input type="text" id="studentName" class="w-full px-4 py-3 border border-gray-300 rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition" placeholder="Ví dụ: Nguyễn Văn A">
+                            </div>
+                            <div>
+                                <label class="block text-sm font-semibold text-gray-700 mb-1.5">Lớp</label>
+                                <input type="text" id="studentClass" class="w-full px-4 py-3 border border-gray-300 rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition" placeholder="Ví dụ: 12A1">
+                            </div>
+                            <button onclick="startExam()" class="w-full bg-blue-600 text-white font-bold py-3.5 rounded-xl hover:bg-blue-700 transition duration-200 shadow-md hover:shadow-lg transform hover:-translate-y-0.5 mt-4">
+                                BẮT ĐẦU LÀM BÀI
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            `;
+      }
+
+      function startExam() {
+        const name = document.getElementById("studentName").value.trim();
+        const className = document.getElementById("studentClass").value.trim();
+
+        if (!name || !className) {
+          showAlert("Vui lòng nhập đầy đủ Họ tên và Lớp!");
+          return;
+        }
+
+        state.student.name = name;
+        state.student.className = className;
+        state.screen = "exam";
+        state.timeLeft = 3600;
+
+        state.timerInterval = setInterval(() => {
+          state.timeLeft--;
+          updateTimerDisplay();
+          if (state.timeLeft <= 0) {
+            clearInterval(state.timerInterval);
+            submitExam();
+          }
+        }, 1000);
+
+        render();
+        window.scrollTo(0, 0);
+      }
+
+      function updateTimerDisplay() {
+        const timerEl = document.getElementById("timer");
+        if (timerEl) {
+          const m = Math.floor(state.timeLeft / 60)
+            .toString()
+            .padStart(2, "0");
+          const s = (state.timeLeft % 60).toString().padStart(2, "0");
+          timerEl.innerText = `${m}:${s}`;
+
+          if (state.timeLeft <= 300) {
+            // 5 minutes left
+            timerEl.classList.remove("text-blue-600");
+            timerEl.classList.add("text-red-600", "animate-pulse");
+          }
+        }
+      }
+
+      function saveAnswer(part, qId, value, subId = null) {
+        if (part === "part1" || part === "part3") {
+          state.answers[part][qId] = value;
+        } else if (part === "part2") {
+          if (!state.answers.part2[qId]) state.answers.part2[qId] = {};
+          state.answers.part2[qId][subId] = value;
+        }
+      }
+
+      function renderExam() {
+        let html = `
+                <div class="min-h-screen bg-gray-50 pb-24">
+                    <!-- Header -->
+                    <div class="sticky top-0 bg-white shadow-sm z-50 border-b border-gray-200">
+                        <div class="max-w-5xl mx-auto px-4 py-3 flex justify-between items-center">
+                            <div class="flex items-center">
+                                <div class="bg-blue-100 p-2 rounded-lg mr-3 hidden sm:block">
+                                    <svg class="w-6 h-6 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z"></path></svg>
+                                </div>
+                                <div>
+                                    <div class="font-bold text-gray-800 text-sm sm:text-base">${state.student.name}</div>
+                                    <div class="text-xs sm:text-sm text-gray-500">Lớp: ${state.student.className}</div>
+                                </div>
+                            </div>
+                            
+                            <div class="text-center bg-gray-50 px-4 py-1.5 rounded-lg border border-gray-200">
+                                <div class="text-xs text-gray-500 font-medium uppercase tracking-wider">Thời gian còn lại</div>
+                                <div id="timer" class="text-xl sm:text-2xl font-bold text-blue-600 font-mono">60:00</div>
+                            </div>
+                            
+                            <button onclick="confirmSubmit()" class="bg-green-600 text-white px-4 sm:px-6 py-2 rounded-lg font-bold text-sm sm:text-base hover:bg-green-700 transition shadow-sm">Nộp bài</button>
+                        </div>
+                    </div>
+                    
+                    <div class="max-w-5xl mx-auto px-4 py-8 space-y-8">
+            `;
+
+        const examType = state.examData.examType || "2";
+        const p1Points = examType === "1" ? "6.0" : "4.5";
+        const p2Points = "4.0";
+        const p3Points = "1.5";
+
+        // Part 1
+        html += `
+                <div class="bg-white p-6 sm:p-8 rounded-2xl shadow-sm border border-gray-200">
+                    <div class="flex items-center mb-6 pb-4 border-b border-gray-100">
+                        <div class="bg-blue-600 text-white w-8 h-8 rounded-lg flex items-center justify-center font-bold mr-3">I</div>
+                        <h2 class="text-xl font-bold text-gray-800">Câu trắc nghiệm nhiều phương án lựa chọn <span class="text-sm font-normal text-gray-500 ml-2">(${p1Points} điểm)</span></h2>
+                    </div>
+                    <div class="space-y-8">
+            `;
+
+        state.examData.part1.forEach((q, index) => {
+          html += `
+                    <div class="question-block bg-white p-5 rounded-xl border border-gray-200 shadow-sm">
+                        <p class="font-semibold text-gray-800 mb-4 whitespace-pre-wrap text-base">${q.question}</p>
+                        <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                `;
+          q.options.forEach((opt, optIndex) => {
+            if (optIndex >= 4) return; // Bắt buộc chỉ hiển thị 4 đáp án (A, B, C, D)
+            const isChecked =
+              state.answers.part1[q.id] === optIndex ? "checked" : "";
+            const letter = String.fromCharCode(65 + optIndex); // A, B, C, D
+            // Remove the A., B., C., D. prefix from the option text if it exists
+            const optText = opt.replace(/^[A-D][.:)\/]\s*/, "");
+
+            html += `
+                        <label class="relative flex items-start p-3 cursor-pointer rounded-lg border border-gray-200 hover:bg-blue-50 hover:border-blue-300 transition-colors bg-white group">
+                            <input type="radio" name="p1_q${q.id}" value="${optIndex}" ${isChecked} onchange="saveAnswer('part1', ${q.id}, ${optIndex})" class="peer sr-only">
+                            <div class="w-6 h-6 rounded-full border border-gray-300 flex items-center justify-center mr-3 flex-shrink-0 bg-white text-gray-600 font-medium text-sm peer-checked:bg-blue-600 peer-checked:border-blue-600 peer-checked:text-white group-hover:border-blue-400 transition-all">
+                                ${letter}
+                            </div>
+                            <span class="text-gray-700 text-sm leading-relaxed pt-0.5 whitespace-pre-wrap">${optText}</span>
+                        </label>
+                    `;
+          });
+          html += `</div></div>`;
+        });
+        html += `</div></div>`;
+
+        // Part 2
+        html += `
+                <div class="bg-white p-6 sm:p-8 rounded-2xl shadow-sm border border-gray-200">
+                    <div class="flex items-center mb-6 pb-4 border-b border-gray-100">
+                        <div class="bg-blue-600 text-white w-8 h-8 rounded-lg flex items-center justify-center font-bold mr-3">II</div>
+                        <h2 class="text-xl font-bold text-gray-800">Câu trắc nghiệm đúng sai <span class="text-sm font-normal text-gray-500 ml-2">(${p2Points} điểm)</span></h2>
+                    </div>
+                    <div class="space-y-8">
+            `;
+
+        state.examData.part2.forEach((q, index) => {
+          html += `
+                    <div class="question-block bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
+                        <div class="p-5 border-b border-gray-100 bg-gray-50">
+                            <p class="text-gray-800 text-base whitespace-pre-wrap font-medium">${q.question}</p>
+                        </div>
+                        <div class="p-2 sm:p-5">
+                `;
+          q.subQuestions.forEach((sq) => {
+            const ans =
+              state.answers.part2[q.id] && state.answers.part2[q.id][sq.id];
+            const isTrueChecked = ans === true ? "checked" : "";
+            const isFalseChecked = ans === false ? "checked" : "";
+
+            const sqText = sq.text.replace(/^[a-e][.:)\/]\s*/i, "");
+
+            html += `
+                        <div class="flex items-start gap-3 sm:gap-4 py-3 sm:py-4 border-b border-gray-100 last:border-0">
+                            <div class="font-medium text-gray-800 w-5 pt-1.5 shrink-0">${sq.id})</div>
+                            <div class="flex gap-2 shrink-0">
+                                <label class="relative cursor-pointer">
+                                    <input type="radio" name="p2_q${q.id}_${sq.id}" value="true" ${isTrueChecked} onchange="saveAnswer('part2', ${q.id}, true, '${sq.id}')" class="peer sr-only">
+                                    <div class="px-3 sm:px-4 py-1.5 rounded-lg border border-gray-200 text-sm font-medium text-gray-600 peer-checked:bg-[#283553] peer-checked:text-white peer-checked:border-[#283553] transition-colors bg-white hover:bg-gray-50">Đúng</div>
+                                </label>
+                                <label class="relative cursor-pointer">
+                                    <input type="radio" name="p2_q${q.id}_${sq.id}" value="false" ${isFalseChecked} onchange="saveAnswer('part2', ${q.id}, false, '${sq.id}')" class="peer sr-only">
+                                    <div class="px-3 sm:px-4 py-1.5 rounded-lg border border-gray-200 text-sm font-medium text-gray-600 peer-checked:bg-[#283553] peer-checked:text-white peer-checked:border-[#283553] transition-colors bg-white hover:bg-gray-50">Sai</div>
+                                </label>
+                            </div>
+                            <div class="text-gray-800 text-sm leading-relaxed pt-1.5 whitespace-pre-wrap">${sqText}</div>
+                        </div>
+                    `;
+          });
+          html += `</div></div>`;
+        });
+        html += `</div></div>`;
+
+        // Part 3
+        if (examType === "2") {
+          html += `
+                  <div class="bg-white p-6 sm:p-8 rounded-2xl shadow-sm border border-gray-200">
+                      <div class="flex items-center mb-6 pb-4 border-b border-gray-100">
+                          <div class="bg-blue-600 text-white w-8 h-8 rounded-lg flex items-center justify-center font-bold mr-3">III</div>
+                          <h2 class="text-xl font-bold text-gray-800">Câu trắc nghiệm trả lời ngắn <span class="text-sm font-normal text-gray-500 ml-2">(${p3Points} điểm)</span></h2>
+                      </div>
+                      <div class="space-y-6">
+              `;
+
+          state.examData.part3.forEach((q, index) => {
+            const val = state.answers.part3[q.id] || "";
+            html += `
+                      <div class="question-block bg-gray-50 p-5 rounded-xl border border-gray-100">
+                          <p class="font-semibold text-gray-800 mb-4 whitespace-pre-wrap text-base">${q.question}</p>
+                          <div class="flex items-center">
+                              <span class="text-gray-500 font-medium mr-3">Đáp án:</span>
+                              <input type="text" value="${val}" oninput="saveAnswer('part3', ${q.id}, this.value)" class="w-full max-w-xs px-4 py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition font-medium text-gray-800" placeholder="Nhập câu trả lời...">
+                          </div>
+                      </div>
+                  `;
+          });
+          html += `</div></div>`;
+        }
+
+        // Submit button
+        html += `
+                    <div class="text-center pt-8 pb-12">
+                        <button onclick="confirmSubmit()" class="bg-green-600 text-white px-10 py-4 rounded-xl font-bold text-lg hover:bg-green-700 transition shadow-lg hover:shadow-xl transform hover:-translate-y-1 flex items-center justify-center mx-auto">
+                            <svg class="w-6 h-6 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>
+                            HOÀN THÀNH VÀ NỘP BÀI
+                        </button>
+                    </div>
+                </div>
+            </div>`;
+
+        return html;
+      }
+
+      function confirmSubmit() {
+        showConfirm(
+          "Bạn có chắc chắn muốn nộp bài không? Hãy kiểm tra lại các câu trả lời trước khi nộp.",
+          () => {
+            clearInterval(state.timerInterval);
+            submitExam();
+          },
+        );
+      }
+
+      function submitExam() {
+        let score = 0;
+        let correctP1 = 0;
+        let correctP2 = 0;
+        let correctP3 = 0;
+        let wrongAnswers = [];
+
+        // Part 1
+        state.examData.part1.forEach((q) => {
+          if (state.answers.part1[q.id] === q.answer) {
+            score += 0.25;
+            correctP1++;
+          } else {
+            wrongAnswers.push({
+              part: "Phần I",
+              question: q.question.split(":")[0],
+              userAnswer:
+                state.answers.part1[q.id] !== undefined
+                  ? String.fromCharCode(65 + state.answers.part1[q.id])
+                  : "Chưa trả lời",
+              correctAnswer: String.fromCharCode(65 + q.answer),
+            });
+          }
+        });
+
+        // Part 2
+        state.examData.part2.forEach((q) => {
+          let correctCount = 0;
+          q.subQuestions.forEach((sq) => {
+            const userAns =
+              state.answers.part2[q.id] && state.answers.part2[q.id][sq.id];
+            if (userAns === sq.answer) {
+              correctCount++;
+              correctP2++;
+            } else {
+              wrongAnswers.push({
+                part: "Phần II",
+                question: `${q.question.split(":")[0]} - Ý ${sq.id}`,
+                userAnswer:
+                  userAns !== undefined
+                    ? userAns
+                      ? "Đúng"
+                      : "Sai"
+                    : "Chưa trả lời",
+                correctAnswer: sq.answer ? "Đúng" : "Sai",
+              });
+            }
+          });
+
+          if (correctCount === 1) score += 0.1;
+          else if (correctCount === 2) score += 0.25;
+          else if (correctCount === 3) score += 0.5;
+          else if (correctCount === 4) score += 1.0;
+        });
+
+        // Part 3
+        state.examData.part3.forEach((q) => {
+          const userAns = (state.answers.part3[q.id] || "")
+            .toString()
+            .trim()
+            .toLowerCase();
+          const correctAns = q.answer.toString().trim().toLowerCase();
+          if (userAns === correctAns) {
+            score += 0.25;
+            correctP3++;
+          } else {
+            wrongAnswers.push({
+              part: "Phần III",
+              question: q.question.split(".")[0].split(":")[0],
+              userAnswer: state.answers.part3[q.id] || "Chưa trả lời",
+              correctAnswer: q.answer,
+            });
+          }
+        });
+
+        state.score = score;
+        state.results = { correctP1, correctP2, correctP3, wrongAnswers };
+
+        // Save to Firestore
+        const resultData = {
+          examId: state.examId,
+          name: state.student.name,
+          className: state.student.className,
+          score: parseFloat(score.toFixed(2)),
+          correctP1,
+          correctP2,
+          correctP3,
+          date: new Date().toISOString(),
+          answers: state.answers,
+          examType: state.examData.examType || "2"
+        };
+        
+        try {
+          window.addDoc(window.collection(window.db, "results"), resultData)
+            .then(() => {
+              console.log("Result saved successfully");
+            })
+            .catch((error) => {
+              console.error("Error saving result:", error);
+              showAlert("Có lỗi xảy ra khi lưu kết quả. Vui lòng báo cho giáo viên.");
+            });
+        } catch (error) {
+          console.error("Error saving result:", error);
+        }
+
+        state.screen = "result";
+        render();
+        window.scrollTo(0, 0);
+      }
+
+      function renderResult() {
+        const { correctP1, correctP2, correctP3, wrongAnswers } = state.results;
+
+        let html = `
+                <div class="min-h-screen bg-gray-50 py-12 px-4">
+                    <div class="max-w-4xl mx-auto space-y-8">
+                        <!-- Score Card -->
+                        <div class="bg-white p-8 rounded-3xl shadow-xl text-center border border-gray-100 relative overflow-hidden">
+                            <div class="absolute top-0 left-0 w-full h-2 bg-blue-500"></div>
+                            <h1 class="text-3xl font-bold text-gray-800 mb-2 mt-2">KẾT QUẢ BÀI THI</h1>
+                            <div class="inline-flex items-center justify-center px-4 py-1.5 bg-gray-100 rounded-full mb-8">
+                                <svg class="w-4 h-4 text-gray-500 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z"></path></svg>
+                                <span class="text-gray-700 font-medium">${state.student.name}</span>
+                                <span class="mx-2 text-gray-300">|</span>
+                                <span class="text-gray-700 font-medium">Lớp: ${state.student.className}</span>
+                            </div>
+                            
+                            <div class="flex justify-center mb-10">
+                                <div class="relative">
+                                    <svg class="w-48 h-48 transform -rotate-90">
+                                        <circle cx="96" cy="96" r="88" stroke="#f3f4f6" stroke-width="12" fill="none"></circle>
+                                        <circle cx="96" cy="96" r="88" stroke="#3b82f6" stroke-width="12" fill="none" stroke-dasharray="552.92" stroke-dashoffset="${552.92 - (552.92 * state.score) / 10}" stroke-linecap="round" class="transition-all duration-1000 ease-out"></circle>
+                                    </svg>
+                                    <div class="absolute inset-0 flex flex-col items-center justify-center">
+                                        <span class="text-5xl font-black text-gray-800">${state.score.toFixed(2)}</span>
+                                        <span class="text-sm font-bold text-gray-400 uppercase tracking-widest mt-1">Điểm</span>
+                                    </div>
+                                </div>
+                            </div>
+                            
+                            <div class="grid grid-cols-${state.examData.examType === "1" ? "2" : "3"} gap-6 text-center border-t border-gray-100 pt-8">
+                                <div class="bg-blue-50 rounded-2xl p-4">
+                                    <div class="text-sm text-blue-600 font-semibold mb-1 uppercase tracking-wider">Phần I</div>
+                                    <div class="text-2xl font-bold text-gray-800">${correctP1}<span class="text-base font-medium text-gray-400">/${state.examData.part1.length}</span></div>
+                                </div>
+                                <div class="bg-green-50 rounded-2xl p-4">
+                                    <div class="text-sm text-green-600 font-semibold mb-1 uppercase tracking-wider">Phần II</div>
+                                    <div class="text-2xl font-bold text-gray-800">${correctP2}<span class="text-base font-medium text-gray-400">/${state.examData.part2.reduce((acc, q) => acc + q.subQuestions.length, 0)}</span></div>
+                                </div>
+                                ${state.examData.examType !== "1" ? `
+                                <div class="bg-purple-50 rounded-2xl p-4">
+                                    <div class="text-sm text-purple-600 font-semibold mb-1 uppercase tracking-wider">Phần III</div>
+                                    <div class="text-2xl font-bold text-gray-800">${correctP3}<span class="text-base font-medium text-gray-400">/${state.examData.part3.length}</span></div>
+                                </div>
+                                ` : ''}
+                            </div>
+                        </div>
+            `;
+
+        if (wrongAnswers.length > 0) {
+          html += `
+                        <!-- Wrong Answers Table -->
+                        <div class="bg-white p-8 rounded-3xl shadow-lg border border-gray-100">
+                            <h2 class="text-xl font-bold text-gray-800 mb-6 flex items-center">
+                                <div class="bg-red-100 p-2 rounded-lg mr-3">
+                                    <svg class="w-5 h-5 text-red-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"></path></svg>
+                                </div>
+                                Chi tiết các câu làm sai
+                            </h2>
+                            <div class="overflow-hidden rounded-xl border border-gray-200">
+                                <table class="w-full text-left border-collapse">
+                                    <thead>
+                                        <tr class="bg-gray-50 border-b border-gray-200">
+                                            <th class="py-3 px-4 font-semibold text-gray-600 text-sm">Phần</th>
+                                            <th class="py-3 px-4 font-semibold text-gray-600 text-sm">Câu hỏi</th>
+                                            <th class="py-3 px-4 font-semibold text-red-600 text-sm">Bạn chọn</th>
+                                            <th class="py-3 px-4 font-semibold text-green-600 text-sm">Đáp án đúng</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody class="divide-y divide-gray-100">
+                `;
+          wrongAnswers.forEach((wa) => {
+            html += `
+                                        <tr class="hover:bg-gray-50 transition">
+                                            <td class="py-3 px-4 text-gray-500 text-sm font-medium">${wa.part}</td>
+                                            <td class="py-3 px-4 text-gray-800 font-medium text-sm whitespace-pre-wrap">${wa.question}</td>
+                                            <td class="py-3 px-4 text-red-500 font-medium text-sm line-through">${wa.userAnswer}</td>
+                                            <td class="py-3 px-4 text-green-600 font-bold text-sm">${wa.correctAnswer}</td>
+                                        </tr>
+                    `;
+          });
+          html += `
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
+                `;
+        }
+
+        html += `
+                        <div class="text-center pt-4">
+                            <button onclick="location.reload()" class="bg-gray-800 text-white px-8 py-3 rounded-xl font-bold hover:bg-gray-900 transition shadow-md hover:shadow-lg flex items-center justify-center mx-auto">
+                                <svg class="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"></path></svg>
+                                LÀM LẠI BÀI THI
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            `;
+
+        return html;
+      }
+
+      window.fetchAdminExams = fetchAdminExams;
+      window.downloadDocx = downloadDocx;
+      window.startExam = startExam;
+      window.saveAnswer = saveAnswer;
+      window.confirmSubmit = confirmSubmit;
+      window.submitExam = submitExam;
+
+      // Initialize app
+      window.onload = async () => {
+        const urlParams = new URLSearchParams(window.location.search);
+        const examId = urlParams.get('examId');
+        
+        if (examId) {
+          state.examId = examId;
+          try {
+            const docRef = window.doc(window.db, "exams", examId);
+            const docSnap = await window.getDoc(docRef);
+            if (docSnap.exists()) {
+              state.examData = JSON.parse(docSnap.data().data);
+              setScreen('login');
+            } else {
+              showAlert("Không tìm thấy bài thi!");
+              setScreen('role_selection');
+            }
+          } catch (error) {
+            console.error("Error fetching exam:", error);
+            showAlert("Lỗi khi tải bài thi.");
+            setScreen('role_selection');
+          }
+        } else {
+          render();
+        }
+      };
+    </script>
+  </body>
+</html>

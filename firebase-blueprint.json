@@ -1,0 +1,59 @@
+{
+  "entities": {
+    "Exam": {
+      "title": "Exam",
+      "description": "An exam uploaded by the admin",
+      "type": "object",
+      "properties": {
+        "adminId": { "type": "string", "description": "UID of the admin who uploaded it" },
+        "createdAt": { "type": "number", "description": "Timestamp of creation" },
+        "examData": { "type": "string", "description": "JSON stringified exam data" },
+        "title": { "type": "string", "description": "Title of the exam (e.g. filename)" }
+      },
+      "required": ["adminId", "createdAt", "examData", "title"]
+    },
+    "Result": {
+      "title": "Result",
+      "description": "A student's exam result",
+      "type": "object",
+      "properties": {
+        "examId": { "type": "string", "description": "ID of the exam taken" },
+        "studentId": { "type": "string", "description": "UID of the student" },
+        "studentName": { "type": "string", "description": "Name of the student" },
+        "className": { "type": "string", "description": "Class of the student" },
+        "score": { "type": "number", "description": "Total score" },
+        "correctP1": { "type": "number" },
+        "correctP2": { "type": "number" },
+        "correctP3": { "type": "number" },
+        "detailedResults": { "type": "string", "description": "JSON stringified detailed results" },
+        "submittedAt": { "type": "number" }
+      },
+      "required": ["examId", "studentId", "studentName", "className", "score", "submittedAt"]
+    },
+    "User": {
+      "title": "User",
+      "description": "User profile (admin or student)",
+      "type": "object",
+      "properties": {
+        "role": { "type": "string", "enum": ["admin", "student"] },
+        "email": { "type": "string" },
+        "name": { "type": "string" }
+      },
+      "required": ["role", "email"]
+    }
+  },
+  "firestore": {
+    "exams/{examId}": {
+      "schema": { "$ref": "#/entities/Exam" },
+      "description": "Exams created by admins"
+    },
+    "results/{resultId}": {
+      "schema": { "$ref": "#/entities/Result" },
+      "description": "Results submitted by students"
+    },
+    "users/{userId}": {
+      "schema": { "$ref": "#/entities/User" },
+      "description": "User profiles"
+    }
+  }
+}
