@@ -1050,11 +1050,16 @@
 Đề thi có 3 phần chính:
 Phần I: Câu hỏi trắc nghiệm 4 lựa chọn (A, B, C, D). Chỉ có 1 đáp án đúng.
 Phần II: Câu hỏi trắc nghiệm Đúng/Sai. Mỗi câu hỏi lớn có nhiều ý nhỏ (thường là a, b, c, d). Mỗi ý nhỏ phải được xác định là Đúng (true) hoặc Sai (false).
+QUY TẮC NHẬN DIỆN ĐÁP ÁN PHẦN II: 
+- Nếu một ý nhỏ (a, b, c, d) được gạch chân (<u>...</u>), đó là ý ĐÚNG (true).
+- Nếu ý nhỏ KHÔNG được gạch chân, đó là ý SAI (false).
+- Nếu không có gạch chân nào, hãy dùng kiến thức chuyên môn để xác định.
+
 Phần III: Câu hỏi trả lời ngắn. Đáp án là một chuỗi văn bản hoặc số.
 
 YÊU CẦU CỰC KỲ QUAN TRỌNG:
 1. Trích xuất TOÀN BỘ các câu hỏi có trong tài liệu. KHÔNG ĐƯỢC TÓM TẮT, KHÔNG ĐƯỢC BỎ SÓT bất kỳ câu nào. Nếu đề thi có 40 câu, bạn phải trả về đủ 40 câu.
-2. Nhận diện đáp án đúng: Đáp án thường được gạch chân (<u>), in đậm (<strong>), tô màu đỏ, hoặc có ký hiệu đặc biệt.
+2. Nhận diện đáp án đúng: Đáp án thường được gạch chân (<u>), in đậm (<strong>), tô màu đỏ, hoặc có ký hiệu đặc biệt. Ưu tiên gạch chân cho Phần II.
 3. Nếu không thấy đáp án được đánh dấu, hãy sử dụng kiến thức chuyên môn để giải và đưa ra đáp án chính xác nhất.
 4. Đối với Phần II: Đảm bảo trích xuất đầy đủ tất cả các ý nhỏ (a, b, c, d...) cho mỗi câu hỏi lớn.
 5. Giữ nguyên định dạng văn bản quan trọng, công thức, hoặc mã nguồn (code) trong nội dung câu hỏi.
@@ -1108,7 +1113,7 @@ ${html}`;
                             properties: {
                               id: { type: Type.STRING },
                               text: { type: Type.STRING },
-                              answer: { type: Type.BOOLEAN }
+                              answer: { type: Type.BOOLEAN, description: "True if the sub-question is underlined in HTML, False otherwise." }
                             },
                             required: ["id", "text", "answer"]
                           } 
@@ -1374,10 +1379,11 @@ ${html}`;
                   text.toLowerCase().endsWith("đ") ||
                   text.toLowerCase().includes("đúng");
 
-                const uTags = el.querySelectorAll(
-                  'u, strong, b, em, mark, span[style*="underline"], span[style*="bold"], span[style*="color: red"]',
-                );
-                if (uTags.length > 0) {
+                const uTags = Array.from(el.querySelectorAll('u, span[style*="underline"]')).filter(tag => tag.textContent.trim().length > 0);
+                const boldTags = Array.from(el.querySelectorAll('strong, b, span[style*="bold"]')).filter(tag => tag.textContent.trim().length > 0);
+                const redTags = Array.from(el.querySelectorAll('span[style*="color: red"], span[style*="color:#ff0000"]')).filter(tag => tag.textContent.trim().length > 0);
+                
+                if (uTags.length > 0 || boldTags.length > 0 || redTags.length > 0) {
                   isTrue = true;
                 }
 
