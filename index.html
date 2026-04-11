@@ -747,6 +747,7 @@
                                 <select id="examTypeSelect" class="bg-white border border-gray-300 text-gray-700 px-4 py-2 rounded-lg font-medium shadow-sm outline-none focus:ring-2 focus:ring-indigo-500">
                                     <option value="1">Loại 1 (Tin, Sử, KTPL...)</option>
                                     <option value="2">Loại 2 (Lý, Hoá, Sinh, Địa)</option>
+                                    <option value="3">Loại 3 (30 câu P1, 5 câu P2 - Thang 20đ)</option>
                                 </select>
                                 <input type="file" id="docxUpload" accept=".docx" class="hidden" onchange="handleFileUpload(event)">
                                 <button onclick="document.getElementById('docxUpload').click()" class="bg-indigo-600 text-white px-4 py-2 rounded-lg font-medium hover:bg-indigo-700 transition shadow-sm flex items-center">
@@ -953,9 +954,18 @@
         } else {
           state.allResults.forEach((res, idx) => {
             const examType = res.examType || "2";
-            const p1Total = examType === "1" ? 24 : 18;
-            const p2Total = 16;
-            const p3Total = res.correctP3 !== undefined && res.correctP3 > 0 ? res.correctP3 : (examType === "1" ? 0 : 6);
+            let p1Total, p2Total, p3Total;
+            
+            if (examType === "3") {
+              p1Total = 30;
+              p2Total = 20; // 5 questions * 4 subquestions = 20
+              p3Total = 0;
+            } else {
+              p1Total = examType === "1" ? 24 : 18;
+              p2Total = 16;
+              p3Total = res.correctP3 !== undefined && res.correctP3 > 0 ? res.correctP3 : (examType === "1" ? 0 : 6);
+            }
+            
             const p3Display = p3Total === 0 ? "-" : `${res.correctP3 || 0}/${p3Total}`;
 
             html += `
@@ -1062,7 +1072,10 @@ YÊU CẦU CỰC KỲ QUAN TRỌNG:
 2. Nhận diện đáp án đúng: Đáp án thường được gạch chân (<u>), in đậm (<strong>), tô màu đỏ, hoặc có ký hiệu đặc biệt. Ưu tiên gạch chân cho Phần II.
 3. Nếu không thấy đáp án được đánh dấu, hãy sử dụng kiến thức chuyên môn để giải và đưa ra đáp án chính xác nhất.
 4. Đối với Phần II: Đảm bảo trích xuất đầy đủ tất cả các ý nhỏ (a, b, c, d...) cho mỗi câu hỏi lớn.
-5. Giữ nguyên định dạng văn bản quan trọng, công thức, hoặc mã nguồn (code) trong nội dung câu hỏi.
+5. Giữ nguyên định dạng văn bản quan trọng, công thức, hoặc mã nguồn (code) trong nội dung câu hỏi. 
+   - PHẢI sử dụng ký tự xuống dòng (\n) để tách biệt các dòng code. TUYỆT ĐỐI KHÔNG được gộp các dòng code lại với nhau thành một dòng.
+   - PHẢI giữ nguyên các khoảng trắng thụt lề (indentation) ở đầu dòng để code (như Python) có cấu trúc đúng.
+   - Luôn chèn ít nhất một ký tự xuống dòng (\n) giữa phần câu hỏi dẫn và phần mã nguồn.
 6. Loại bỏ các phần tiêu đề hành chính (Tên trường, tên lớp, kỳ thi, lời dặn...) ở đầu trang.
 7. Đảm bảo các ID câu hỏi là số thứ tự tăng dần (1, 2, 3...).
 8. Nếu đề thi KHÔNG CÓ đủ 3 phần (ví dụ chỉ có bài tập tự luận/code), hãy đưa tất cả vào "part3" (trả lời ngắn/tự luận) và để part1, part2 là mảng rỗng [].
@@ -1485,9 +1498,18 @@ ${html}`;
 
         results.forEach((res, idx) => {
           const examType = res.examType || "2";
-          const p1Total = examType === "1" ? 24 : 18;
-          const p2Total = 16;
-          const p3Total = res.correctP3 !== undefined && res.correctP3 > 0 ? res.correctP3 : (examType === "1" ? 0 : 6);
+          let p1Total, p2Total, p3Total;
+          
+          if (examType === "3") {
+            p1Total = 30;
+            p2Total = 20;
+            p3Total = 0;
+          } else {
+            p1Total = examType === "1" ? 24 : 18;
+            p2Total = 16;
+            p3Total = res.correctP3 !== undefined && res.correctP3 > 0 ? res.correctP3 : (examType === "1" ? 0 : 6);
+          }
+          
           const p3Display = p3Total === 0 ? "-" : `${res.correctP3 || 0}/${p3Total}`;
 
           tableHtml += `
@@ -1655,9 +1677,17 @@ ${html}`;
             `;
 
         const examType = state.examData.examType || "2";
-        const p1Points = examType === "1" ? (state.examData.part3 && state.examData.part3.length > 0 ? "4.5" : "6.0") : "4.5";
-        const p2Points = "4.0";
-        const p3Points = examType === "1" ? (state.examData.part3 && state.examData.part3.length > 0 ? "1.5" : "0") : "1.5";
+        let p1Points, p2Points, p3Points;
+        
+        if (examType === "3") {
+          p1Points = "15.0";
+          p2Points = "5.0";
+          p3Points = "0";
+        } else {
+          p1Points = examType === "1" ? (state.examData.part3 && state.examData.part3.length > 0 ? "4.5" : "6.0") : "4.5";
+          p2Points = "4.0";
+          p3Points = examType === "1" ? (state.examData.part3 && state.examData.part3.length > 0 ? "1.5" : "0") : "1.5";
+        }
 
         // Part 1
         if (state.examData.part1 && state.examData.part1.length > 0) {
@@ -1673,8 +1703,8 @@ ${html}`;
           state.examData.part1.forEach((q, index) => {
             if (!q || !q.options) return;
             html += `
-                      <div class="question-block bg-white p-5 rounded-xl border border-gray-200 shadow-sm">
-                          <div class="font-semibold text-gray-800 mb-4 whitespace-pre-wrap text-base font-mono bg-gray-50 p-3 rounded-lg border border-gray-100 overflow-x-auto">${q.question}</div>
+                      <div class="question-block bg-white p-6 rounded-xl border border-gray-200 shadow-sm">
+                          <div class="text-gray-800 mb-6 whitespace-pre-wrap text-base leading-relaxed font-medium">${q.question}</div>
                           <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
                   `;
             q.options.forEach((opt, optIndex) => {
@@ -1715,10 +1745,10 @@ ${html}`;
             if (!q || !q.subQuestions) return;
             html += `
                       <div class="question-block bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
-                          <div class="p-5 border-b border-gray-100 bg-gray-50">
-                              <div class="text-gray-800 text-base whitespace-pre-wrap font-medium font-mono overflow-x-auto">${q.question}</div>
+                          <div class="p-6 border-b border-gray-100 bg-gray-50">
+                              <div class="text-gray-800 text-base whitespace-pre-wrap font-semibold leading-relaxed">${q.question}</div>
                           </div>
-                          <div class="p-2 sm:p-5">
+                          <div class="p-2 sm:p-6">
                   `;
             q.subQuestions.forEach((sq) => {
               const ans =
@@ -1765,11 +1795,11 @@ ${html}`;
             if (!q) return;
             const val = state.answers.part3[q.id] || "";
             html += `
-                      <div class="question-block bg-gray-50 p-5 rounded-xl border border-gray-100">
-                          <div class="font-semibold text-gray-800 mb-4 whitespace-pre-wrap text-base font-mono bg-white p-3 rounded-lg border border-gray-200 overflow-x-auto">${q.question}</div>
-                          <div class="flex items-center">
-                              <span class="text-gray-500 font-medium mr-3">Đáp án:</span>
-                              <input type="text" value="${val}" oninput="saveAnswer('part3', ${q.id}, this.value)" class="w-full max-w-xs px-4 py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition font-medium text-gray-800" placeholder="Nhập câu trả lời...">
+                      <div class="question-block bg-white p-6 rounded-xl border border-gray-200 shadow-sm">
+                          <div class="text-gray-800 mb-6 whitespace-pre-wrap text-base leading-relaxed font-medium">${q.question}</div>
+                          <div class="flex items-center bg-gray-50 p-4 rounded-lg border border-gray-100">
+                              <span class="text-gray-600 font-bold mr-3 shrink-0">Đáp án:</span>
+                              <input type="text" value="${val}" oninput="saveAnswer('part3', ${q.id}, this.value)" class="w-full px-4 py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition font-medium text-gray-800 bg-white" placeholder="Nhập câu trả lời...">
                           </div>
                       </div>
                   `;
@@ -1811,7 +1841,8 @@ ${html}`;
         // Part 1
         state.examData.part1.forEach((q) => {
           if (state.answers.part1[q.id] === q.answer) {
-            score += 0.25;
+            const p1Point = state.examData.examType === "3" ? 0.5 : 0.25;
+            score += p1Point;
             correctP1++;
           } else {
             wrongAnswers.push({
@@ -1932,16 +1963,16 @@ ${html}`;
                                 <div class="relative">
                                     <svg class="w-48 h-48 transform -rotate-90">
                                         <circle cx="96" cy="96" r="88" stroke="#f3f4f6" stroke-width="12" fill="none"></circle>
-                                        <circle cx="96" cy="96" r="88" stroke="#3b82f6" stroke-width="12" fill="none" stroke-dasharray="552.92" stroke-dashoffset="${552.92 - (552.92 * state.score) / 10}" stroke-linecap="round" class="transition-all duration-1000 ease-out"></circle>
+                                        <circle cx="96" cy="96" r="88" stroke="#3b82f6" stroke-width="12" fill="none" stroke-dasharray="552.92" stroke-dashoffset="${552.92 - (552.92 * state.score) / (state.examData.examType === "3" ? 20 : 10)}" stroke-linecap="round" class="transition-all duration-1000 ease-out"></circle>
                                     </svg>
                                     <div class="absolute inset-0 flex flex-col items-center justify-center">
                                         <span class="text-5xl font-black text-gray-800">${state.score.toFixed(2)}</span>
-                                        <span class="text-sm font-bold text-gray-400 uppercase tracking-widest mt-1">Điểm</span>
+                                        <span class="text-sm font-bold text-gray-400 uppercase tracking-widest mt-1">/ ${state.examData.examType === "3" ? 20 : 10} Điểm</span>
                                     </div>
                                 </div>
                             </div>
                             
-                            <div class="grid grid-cols-${state.examData.part3 && state.examData.part3.length > 0 ? "3" : (state.examData.examType === "1" ? "2" : "3")} gap-6 text-center border-t border-gray-100 pt-8">
+                            <div class="grid grid-cols-${(state.examData.part3 && state.examData.part3.length > 0) || state.examData.examType === "3" ? "3" : (state.examData.examType === "1" ? "2" : "3")} gap-6 text-center border-t border-gray-100 pt-8">
                                 <div class="bg-blue-50 rounded-2xl p-4">
                                     <div class="text-sm text-blue-600 font-semibold mb-1 uppercase tracking-wider">Phần I</div>
                                     <div class="text-2xl font-bold text-gray-800">${correctP1}<span class="text-base font-medium text-gray-400">/${state.examData.part1.length}</span></div>
@@ -1950,12 +1981,17 @@ ${html}`;
                                     <div class="text-sm text-green-600 font-semibold mb-1 uppercase tracking-wider">Phần II</div>
                                     <div class="text-2xl font-bold text-gray-800">${correctP2}<span class="text-base font-medium text-gray-400">/${state.examData.part2.reduce((acc, q) => acc + q.subQuestions.length, 0)}</span></div>
                                 </div>
-                                ${state.examData.examType !== "1" ? `
+                                ${state.examData.examType === "2" || (state.examData.part3 && state.examData.part3.length > 0) ? `
                                 <div class="bg-purple-50 rounded-2xl p-4">
                                     <div class="text-sm text-purple-600 font-semibold mb-1 uppercase tracking-wider">Phần III</div>
                                     <div class="text-2xl font-bold text-gray-800">${correctP3}<span class="text-base font-medium text-gray-400">/${state.examData.part3.length}</span></div>
                                 </div>
-                                ` : ''}
+                                ` : (state.examData.examType === "3" ? `
+                                <div class="bg-purple-50 rounded-2xl p-4">
+                                    <div class="text-sm text-purple-600 font-semibold mb-1 uppercase tracking-wider">Phần III</div>
+                                    <div class="text-2xl font-bold text-gray-800">0<span class="text-base font-medium text-gray-400">/0</span></div>
+                                </div>
+                                ` : '')}
                             </div>
                         </div>
             `;
