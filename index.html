@@ -1080,6 +1080,7 @@ YÊU CẦU CỰC KỲ QUAN TRỌNG:
 7. Đảm bảo các ID câu hỏi là số thứ tự tăng dần (1, 2, 3...).
 8. Nếu đề thi KHÔNG CÓ đủ 3 phần (ví dụ chỉ có bài tập tự luận/code), hãy đưa tất cả vào "part3" (trả lời ngắn/tự luận) và để part1, part2 là mảng rỗng [].
 9. Nếu đề thi dùng từ "Bài 1", "Bài 2" thay vì "Câu 1", hãy coi đó là các câu hỏi.
+10. Trích xuất CHÍNH XÁC "Giải thích chi tiết" hoặc "Giải thích" nếu có trong đề thi và lưu vào thuộc tính "explanation" (nếu không có thì để rỗng hoặc null, tuyệt đối không tự bịa ra giải thích nếu đề bài không có).
 
 Nội dung HTML cần phân tích:
 ${html}`;
@@ -1107,7 +1108,8 @@ ${html}`;
                         id: { type: Type.NUMBER },
                         question: { type: Type.STRING },
                         options: { type: Type.ARRAY, items: { type: Type.STRING } },
-                        answer: { type: Type.NUMBER }
+                        answer: { type: Type.NUMBER },
+                        explanation: { type: Type.STRING, description: "Detailed explanation if present in the text" }
                       },
                       required: ["id", "question", "options", "answer"]
                     }
@@ -1119,6 +1121,7 @@ ${html}`;
                       properties: {
                         id: { type: Type.NUMBER },
                         question: { type: Type.STRING },
+                        explanation: { type: Type.STRING, description: "Detailed explanation if present for the overall question" },
                         subQuestions: { 
                           type: Type.ARRAY, 
                           items: { 
@@ -1126,7 +1129,8 @@ ${html}`;
                             properties: {
                               id: { type: Type.STRING },
                               text: { type: Type.STRING },
-                              answer: { type: Type.BOOLEAN, description: "True if the sub-question is underlined in HTML, False otherwise." }
+                              answer: { type: Type.BOOLEAN, description: "True if the sub-question is underlined in HTML, False otherwise." },
+                              explanation: { type: Type.STRING, description: "Detailed explanation for this specific sub-question if present" }
                             },
                             required: ["id", "text", "answer"]
                           } 
@@ -1142,7 +1146,8 @@ ${html}`;
                       properties: {
                         id: { type: Type.NUMBER },
                         question: { type: Type.STRING },
-                        answer: { type: Type.STRING }
+                        answer: { type: Type.STRING },
+                        explanation: { type: Type.STRING, description: "Detailed explanation if present in the text" }
                       },
                       required: ["id", "question", "answer"]
                     }
@@ -1848,6 +1853,10 @@ ${html}`;
             score += p1Point;
             correctP1++;
           } else {
+            let correctAnsText = `${String.fromCharCode(65 + q.answer)}. ${q.options[q.answer].replace(/^[A-D][.:)\/]\s*/, "")}`;
+            if (q.explanation) {
+               correctAnsText += `<br><span class="text-gray-500 italic text-xs mt-1 block font-normal">Giải thích: ${q.explanation}</span>`;
+            }
             wrongAnswers.push({
               part: "Phần I",
               question: `Câu ${q.id}: ${q.question.replace(/^(Câu|Bài)\s*\d+[\s.:\-]+/i, "")}`,
@@ -1855,7 +1864,7 @@ ${html}`;
                 state.answers.part1[q.id] !== undefined
                   ? `${String.fromCharCode(65 + state.answers.part1[q.id])}. ${q.options[state.answers.part1[q.id]].replace(/^[A-D][.:)\/]\s*/, "")}`
                   : "Chưa trả lời",
-              correctAnswer: `${String.fromCharCode(65 + q.answer)}. ${q.options[q.answer].replace(/^[A-D][.:)\/]\s*/, "")}`,
+              correctAnswer: correctAnsText,
             });
           }
         });
@@ -1870,6 +1879,12 @@ ${html}`;
               correctCount++;
               correctP2++;
             } else {
+              let correctAnsText = sq.answer ? "Đúng" : "Sai";
+              let explanation = sq.explanation || q.explanation;
+              if (explanation) {
+                 correctAnsText += `<br><span class="text-gray-500 italic text-xs mt-1 block font-normal">Giải thích: ${explanation}</span>`;
+              }
+              
               wrongAnswers.push({
                 part: "Phần II",
                 question: `Câu ${q.id} - Ý ${sq.id}: ${sq.text.replace(/^[a-e][.:)\/]\s*/i, "")}`,
@@ -1879,7 +1894,7 @@ ${html}`;
                       ? "Đúng"
                       : "Sai"
                     : "Chưa trả lời",
-                correctAnswer: sq.answer ? "Đúng" : "Sai",
+                correctAnswer: correctAnsText,
               });
             }
           });
@@ -1901,11 +1916,15 @@ ${html}`;
             score += 0.25;
             correctP3++;
           } else {
+            let correctAnsText = q.answer;
+            if (q.explanation) {
+               correctAnsText += `<br><span class="text-gray-500 italic text-xs mt-1 block font-normal">Giải thích: ${q.explanation}</span>`;
+            }
             wrongAnswers.push({
               part: "Phần III",
               question: `Câu ${q.id}: ${q.question.replace(/^(Câu|Bài)\s*\d+[\s.:\-]+/i, "")}`,
               userAnswer: state.answers.part3[q.id] || "Chưa trả lời",
-              correctAnswer: q.answer,
+              correctAnswer: correctAnsText,
             });
           }
         });
