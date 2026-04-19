@@ -1850,12 +1850,12 @@ ${html}`;
           } else {
             wrongAnswers.push({
               part: "Phần I",
-              question: `Câu ${q.id}`,
+              question: `Câu ${q.id}: ${q.question.replace(/^(Câu|Bài)\s*\d+[\s.:\-]+/i, "")}`,
               userAnswer:
                 state.answers.part1[q.id] !== undefined
-                  ? String.fromCharCode(65 + state.answers.part1[q.id])
+                  ? `${String.fromCharCode(65 + state.answers.part1[q.id])}. ${q.options[state.answers.part1[q.id]].replace(/^[A-D][.:)\/]\s*/, "")}`
                   : "Chưa trả lời",
-              correctAnswer: String.fromCharCode(65 + q.answer),
+              correctAnswer: `${String.fromCharCode(65 + q.answer)}. ${q.options[q.answer].replace(/^[A-D][.:)\/]\s*/, "")}`,
             });
           }
         });
@@ -1872,7 +1872,7 @@ ${html}`;
             } else {
               wrongAnswers.push({
                 part: "Phần II",
-                question: `Câu ${q.id} - Ý ${sq.id}`,
+                question: `Câu ${q.id} - Ý ${sq.id}: ${sq.text.replace(/^[a-e][.:)\/]\s*/i, "")}`,
                 userAnswer:
                   userAns !== undefined
                     ? userAns
@@ -1903,7 +1903,7 @@ ${html}`;
           } else {
             wrongAnswers.push({
               part: "Phần III",
-              question: `Câu ${q.id}`,
+              question: `Câu ${q.id}: ${q.question.replace(/^(Câu|Bài)\s*\d+[\s.:\-]+/i, "")}`,
               userAnswer: state.answers.part3[q.id] || "Chưa trả lời",
               correctAnswer: q.answer,
             });
