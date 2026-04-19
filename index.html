@@ -1702,9 +1702,10 @@ ${html}`;
 
           state.examData.part1.forEach((q, index) => {
             if (!q || !q.options) return;
+            const cleanQuestion = q.question.replace(/^(Câu|Bài)\s*\d+[\s.:\-]+/i, "");
             html += `
                       <div class="question-block bg-white p-6 rounded-xl border border-gray-200 shadow-sm">
-                          <div class="text-gray-800 mb-6 whitespace-pre-wrap text-base leading-relaxed font-medium">${q.question}</div>
+                          <div class="text-gray-800 mb-6 whitespace-pre-wrap text-base leading-relaxed font-medium"><span class="font-bold text-blue-600 mr-1">Câu ${q.id}:</span> ${cleanQuestion}</div>
                           <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
                   `;
             q.options.forEach((opt, optIndex) => {
@@ -1743,10 +1744,11 @@ ${html}`;
 
           state.examData.part2.forEach((q, index) => {
             if (!q || !q.subQuestions) return;
+            const cleanQuestion = q.question.replace(/^(Câu|Bài)\s*\d+[\s.:\-]+/i, "");
             html += `
                       <div class="question-block bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
                           <div class="p-6 border-b border-gray-100 bg-gray-50">
-                              <div class="text-gray-800 text-base whitespace-pre-wrap font-semibold leading-relaxed">${q.question}</div>
+                              <div class="text-gray-800 text-base whitespace-pre-wrap font-semibold leading-relaxed"><span class="font-bold text-blue-600 mr-1">Câu ${q.id}:</span> ${cleanQuestion}</div>
                           </div>
                           <div class="p-2 sm:p-6">
                   `;
@@ -1793,10 +1795,11 @@ ${html}`;
 
           state.examData.part3.forEach((q, index) => {
             if (!q) return;
+            const cleanQuestion = q.question.replace(/^(Câu|Bài)\s*\d+[\s.:\-]+/i, "");
             const val = state.answers.part3[q.id] || "";
             html += `
                       <div class="question-block bg-white p-6 rounded-xl border border-gray-200 shadow-sm">
-                          <div class="text-gray-800 mb-6 whitespace-pre-wrap text-base leading-relaxed font-medium">${q.question}</div>
+                          <div class="text-gray-800 mb-6 whitespace-pre-wrap text-base leading-relaxed font-medium"><span class="font-bold text-blue-600 mr-1">Câu ${q.id}:</span> ${cleanQuestion}</div>
                           <div class="flex items-center bg-gray-50 p-4 rounded-lg border border-gray-100">
                               <span class="text-gray-600 font-bold mr-3 shrink-0">Đáp án:</span>
                               <input type="text" value="${val}" oninput="saveAnswer('part3', ${q.id}, this.value)" class="w-full px-4 py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition font-medium text-gray-800 bg-white" placeholder="Nhập câu trả lời...">
@@ -1847,7 +1850,7 @@ ${html}`;
           } else {
             wrongAnswers.push({
               part: "Phần I",
-              question: q.question.split(":")[0],
+              question: `Câu ${q.id}`,
               userAnswer:
                 state.answers.part1[q.id] !== undefined
                   ? String.fromCharCode(65 + state.answers.part1[q.id])
@@ -1869,7 +1872,7 @@ ${html}`;
             } else {
               wrongAnswers.push({
                 part: "Phần II",
-                question: `${q.question.split(":")[0]} - Ý ${sq.id}`,
+                question: `Câu ${q.id} - Ý ${sq.id}`,
                 userAnswer:
                   userAns !== undefined
                     ? userAns
@@ -1900,7 +1903,7 @@ ${html}`;
           } else {
             wrongAnswers.push({
               part: "Phần III",
-              question: q.question.split(".")[0].split(":")[0],
+              question: `Câu ${q.id}`,
               userAnswer: state.answers.part3[q.id] || "Chưa trả lời",
               correctAnswer: q.answer,
             });
