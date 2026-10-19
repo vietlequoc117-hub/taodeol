@@ -5,6 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Hệ thống thi trực tuyến</title>
     <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/mammoth/1.6.0/mammoth.browser.min.js"></script>
     <style>
       @import url("https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap");
       body {
@@ -29,10 +30,9 @@
     <div id="app"></div>
     <div id="modal-container"></div>
 
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/mammoth/1.6.0/mammoth.browser.min.js"></script>
     <script type="module">
       import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-app.js";
-      import { getAuth, signInWithPopup, GoogleAuthProvider, onAuthStateChanged, signOut } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-auth.js";
+      import { getAuth, signInWithPopup, GoogleAuthProvider, signOut } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-auth.js";
       import { getFirestore, collection, addDoc, getDoc, getDocs, doc, setDoc, query, where, orderBy, deleteDoc, onSnapshot } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js";
       import { GoogleGenAI, Type } from "@google/genai";
 
@@ -78,6 +78,17 @@
       window.orderBy = orderBy;
       window.deleteDoc = deleteDoc;
       window.onSnapshot = onSnapshot;
+
+      function escapeHtml(str) {
+        if (str === null || str === undefined) return "";
+        return String(str)
+          .replace(/&/g, "&amp;")
+          .replace(/</g, "&lt;")
+          .replace(/>/g, "&gt;")
+          .replace(/"/g, "&quot;")
+          .replace(/'/g, "&#39;");
+      }
+      window.escapeHtml = escapeHtml;
 
       function showAlert(message, callback = null) {
         const container = document.getElementById("modal-container");
@@ -516,7 +527,8 @@
         examData: examData,
         isAdmin: false,
         user: null,
-        allResults: []
+        allResults: [],
+        part2Track: "cs"
       };
 
       function render() {
@@ -747,7 +759,7 @@
                                 <select id="examTypeSelect" class="bg-white border border-gray-300 text-gray-700 px-4 py-2 rounded-lg font-medium shadow-sm outline-none focus:ring-2 focus:ring-indigo-500">
                                     <option value="1">Loại 1 (Tin, Sử, KTPL...)</option>
                                     <option value="2">Loại 2 (Lý, Hoá, Sinh, Địa)</option>
-                                    <option value="3" selected>Loại 3 (30 câu P1, 5 câu P2 - Thang 20đ)</option>
+                                    <option value="3" selected>Loại 3 (30 câu P1, 7 câu P2 - Thang 20đ)</option>
                                 </select>
                                 <input type="file" id="docxUpload" accept=".docx" class="hidden" onchange="handleFileUpload(event)">
                                 <button onclick="document.getElementById('docxUpload').click()" class="bg-indigo-600 text-white px-4 py-2 rounded-lg font-medium hover:bg-indigo-700 transition shadow-sm flex items-center">
@@ -1058,8 +1070,8 @@
         const prompt = `Bạn là một chuyên gia giáo dục và chuyên gia trích xuất dữ liệu. Hãy phân tích nội dung HTML trích xuất từ file DOCX đề thi và chuyển đổi nó thành định dạng JSON chính xác.
 
 Đề thi có 3 phần chính:
-Phần I: Câu hỏi trắc nghiệm 4 lựa chọn (A, B, C, D). Chỉ có 1 đáp án đúng.
-Phần II: Câu hỏi trắc nghiệm Đúng/Sai. Mỗi câu hỏi lớn có nhiều ý nhỏ (thường là a, b, c, d). Mỗi ý nhỏ phải được xác định là Đúng (true) hoặc Sai (false).
+Phần I: Câu hỏi trắc nghiệm 4 lựa chọn (A, B, C, D). Chỉ có 1 đáp án đúng. Đối với đề Loại 3 (Tin học), Phần I thường có đúng 30 câu hỏi (từ Câu 1 đến Câu 30). TUYỆT ĐỐI PHẢI TRÍCH XUẤT ĐẦY ĐỦ TẤT CẢ 30 CÂU, KHÔNG ĐƯỢC DỪNG LẠI Ở CÂU 9 HOẶC CÂU 10.
+Phần II: Câu hỏi trắc nghiệm Đúng/Sai. Mỗi câu hỏi lớn có 4 ý nhỏ (a, b, c, d). Mỗi ý nhỏ phải được xác định là Đúng (true) hoặc Sai (false). Đối với đề Loại 3, Phần II gồm đúng 7 câu (Câu 1 đến Câu 7: 3 câu Phần chung, 2 câu Khoa học máy tính, 2 câu Tin học ứng dụng). PHẢI TRÍCH XUẤT ĐẦY ĐỦ CẢ 7 CÂU.
 QUY TẮC NHẬN DIỆN ĐÁP ÁN PHẦN II: 
 - Nếu một ý nhỏ (a, b, c, d) được gạch chân (<u>...</u>), đó là ý ĐÚNG (true).
 - Nếu ý nhỏ KHÔNG được gạch chân, đó là ý SAI (false).
@@ -1068,16 +1080,17 @@ QUY TẮC NHẬN DIỆN ĐÁP ÁN PHẦN II:
 Phần III: Câu hỏi trả lời ngắn. Đáp án là một chuỗi văn bản hoặc số.
 
 YÊU CẦU CỰC KỲ QUAN TRỌNG:
-1. Trích xuất TOÀN BỘ các câu hỏi có trong tài liệu. KHÔNG ĐƯỢC TÓM TẮT, KHÔNG ĐƯỢC BỎ SÓT bất kỳ câu nào. Nếu đề thi có 40 câu, bạn phải trả về đủ 40 câu.
+1. Trích xuất TOÀN BỘ các câu hỏi có trong tài liệu. KHÔNG ĐƯỢC TÓM TẮT, KHÔNG ĐƯỢC BỎ SÓT bất kỳ câu nào. Nếu đề thi có 30 câu Phần I và 7 câu Phần II, bạn phải trả về đủ 30 câu Phần I và 7 câu Phần II (không được thiếu dù chỉ 1 câu).
 2. Nhận diện đáp án đúng: Đáp án thường được gạch chân (<u>), in đậm (<strong>), tô màu đỏ, hoặc có ký hiệu đặc biệt. Ưu tiên gạch chân cho Phần II.
 3. Nếu không thấy đáp án được đánh dấu, hãy sử dụng kiến thức chuyên môn để giải và đưa ra đáp án chính xác nhất.
-4. Đối với Phần II: Đảm bảo trích xuất đầy đủ tất cả các ý nhỏ (a, b, c, d...) cho mỗi câu hỏi lớn.
-5. Giữ nguyên định dạng văn bản quan trọng, công thức, hoặc mã nguồn (code) trong nội dung câu hỏi. 
+4. Đối với Phần II: Đảm bảo trích xuất đầy đủ tất cả các ý nhỏ (a, b, c, d) cho mỗi câu hỏi lớn. PHẢI trích xuất đủ cả 7 câu của Phần II theo đúng thứ tự xuất hiện (1, 2, 3, 4, 5, 6, 7).
+5. Giữ nguyên định dạng văn bản quan trọng, công thức, thẻ HTML hoặc mã nguồn (code) trong nội dung câu hỏi.
+   - Nếu trong câu hỏi hoặc các phương án có chứa thẻ HTML (ví dụ: <style>, <link>, <head>, <script>, <div>...) hoặc toán tử so sánh (<, >), HÃY GIỮ NGUYÊN dưới dạng chuỗi văn bản thuần túy (không tự ý xóa thẻ hay cắt bớt).
    - PHẢI sử dụng ký tự xuống dòng (\n) để tách biệt các dòng code. TUYỆT ĐỐI KHÔNG được gộp các dòng code lại với nhau thành một dòng.
    - PHẢI giữ nguyên các khoảng trắng thụt lề (indentation) ở đầu dòng để code (như Python) có cấu trúc đúng.
    - Luôn chèn ít nhất một ký tự xuống dòng (\n) giữa phần câu hỏi dẫn và phần mã nguồn.
 6. Loại bỏ các phần tiêu đề hành chính (Tên trường, tên lớp, kỳ thi, lời dặn...) ở đầu trang.
-7. Đảm bảo các ID câu hỏi là số thứ tự tăng dần (1, 2, 3...).
+7. Đảm bảo các ID câu hỏi trong mỗi phần là số thứ tự tăng dần liên tục (1, 2, 3...).
 8. Nếu đề thi KHÔNG CÓ đủ 3 phần (ví dụ chỉ có bài tập tự luận/code), hãy đưa tất cả vào "part3" (trả lời ngắn/tự luận) và để part1, part2 là mảng rỗng [].
 9. Nếu đề thi dùng từ "Bài 1", "Bài 2" thay vì "Câu 1", hãy coi đó là các câu hỏi.
 10. Trích xuất CHÍNH XÁC "Giải thích chi tiết" hoặc "Giải thích" nếu có trong đề thi và lưu vào thuộc tính "explanation" (nếu không có thì để rỗng hoặc null, tuyệt đối không tự bịa ra giải thích nếu đề bài không có).
@@ -1093,7 +1106,7 @@ ${html}`;
           }
 
           const response = await ai.models.generateContent({
-            model: "gemini-2.5-flash",
+            model: "gemini-3.8-flash",
             contents: prompt,
             config: {
               responseMimeType: "application/json",
@@ -1164,6 +1177,11 @@ ${html}`;
           if (!parsedData.part1) parsedData.part1 = [];
           if (!parsedData.part2) parsedData.part2 = [];
           if (!parsedData.part3) parsedData.part3 = [];
+
+          // Normalize sequential IDs (1..N) so Part II questions 1..7 are always consistently numbered
+          parsedData.part1.forEach((q, idx) => { q.id = idx + 1; });
+          parsedData.part2.forEach((q, idx) => { q.id = idx + 1; });
+          parsedData.part3.forEach((q, idx) => { q.id = idx + 1; });
           
           return parsedData;
         } catch (error) {
@@ -1255,28 +1273,34 @@ ${html}`;
           let text = blocks[i].text;
           let el = blocks[i].element;
 
-          // Nhận diện các phần
-          const lowerText = text.toLowerCase();
-          if (lowerText.includes("phần iii") || lowerText.includes("phần 3")) {
+          // Nhận diện các phần (phải ở đầu dòng/tiêu đề để không nhận diện nhầm nội dung câu hỏi như 'thành phần 1', 'phần mềm'...)
+          const trimmedText = text.trim();
+          if (
+            /^(?:mục\s+|phần\s+|part\s*)(?:iii|3)\b/i.test(trimmedText) ||
+            /^(?:mục\s+|phần\s+|part\s*)(?:iii|3)\s*[:.\-]/i.test(trimmedText)
+          ) {
             currentPart = 3;
+            currentQuestion = null;
             continue;
           } else if (
-            lowerText.includes("phần ii") ||
-            lowerText.includes("phần 2")
+            /^(?:mục\s+|phần\s+|part\s*)(?:ii|2)\b/i.test(trimmedText) ||
+            /^(?:mục\s+|phần\s+|part\s*)(?:ii|2)\s*[:.\-]/i.test(trimmedText)
           ) {
             currentPart = 2;
+            currentQuestion = null;
             continue;
           } else if (
-            lowerText.includes("phần i") ||
-            lowerText.includes("phần 1")
+            /^(?:mục\s+|phần\s+|part\s*)(?:i|1)\b/i.test(trimmedText) ||
+            /^(?:mục\s+|phần\s+|part\s*)(?:i|1)\s*[:.\-]/i.test(trimmedText)
           ) {
             currentPart = 1;
+            currentQuestion = null;
             continue;
           }
 
           // 1. Trường hợp dính liền Câu hỏi và Đáp án trên cùng 1 dòng
-          const inlineMatch = text.trim().match(
-            /^([Cc]âu\s*\d+[:.]\s*.*?)(A[.:)\/]\s*.*?)(B[.:)\/]\s*.*?)(C[.:)\/]\s*.*?)(D[.:)\/]\s*.*)$/,
+          const inlineMatch = trimmedText.match(
+            /^((?:[Cc]âu|[Bb]ài)\s*\d+[\s.:\-)]\s*.*?)(A[.:)\/]\s*.*?)(B[.:)\/]\s*.*?)(C[.:)\/]\s*.*?)(D[.:)\/]\s*.*)$/,
           );
           if (inlineMatch && currentPart === 1) {
             currentQuestion = {
@@ -1310,8 +1334,8 @@ ${html}`;
             continue;
           }
 
-          // 2. Nhận diện câu hỏi bình thường
-          const isQuestion = /^câu\s*\d+[:.]/i.test(text.trim());
+          // 2. Nhận diện câu hỏi bình thường (hỗ trợ Câu 1:, Câu 1., Câu 1 -, Câu 1), Bài 1...)
+          const isQuestion = /^(?:câu|bài)\s*\d+[\s.:\-)].*/i.test(trimmedText) || /^(?:câu|bài)\s*\d+$/i.test(trimmedText);
           if (isQuestion) {
             if (currentPart === 1) {
               currentQuestion = {
@@ -1342,6 +1366,7 @@ ${html}`;
           // 3. Nhận diện đáp án/lựa chọn
           if (currentQuestion) {
             if (currentPart === 1) {
+              if (!currentQuestion.options) currentQuestion.options = [];
               let isOptionLine = /^[A-D][.:)\/]/.test(text.trim());
               if (isOptionLine) {
                 // Tách các lựa chọn nếu chúng nằm trên cùng 1 dòng
@@ -1390,6 +1415,7 @@ ${html}`;
                 currentQuestion.question += "\n" + text;
               }
             } else if (currentPart === 2) {
+              if (!currentQuestion.subQuestions) currentQuestion.subQuestions = [];
               const isStatement = /^[a-e][.:)\/]/i.test(text.trim());
               if (isStatement) {
                 let isTrue =
@@ -1604,7 +1630,15 @@ ${html}`;
         state.student.className = className;
         state.screen = "exam";
         state.timeLeft = 3600;
+        if (!state.answers) {
+          state.answers = { part1: {}, part2: {}, part3: {} };
+        }
+        if (!state.answers.part1) state.answers.part1 = {};
+        if (!state.answers.part2) state.answers.part2 = {};
+        if (!state.answers.part3) state.answers.part3 = {};
+        if (!state.part2Track) state.part2Track = "cs";
 
+        if (state.timerInterval) clearInterval(state.timerInterval);
         state.timerInterval = setInterval(() => {
           state.timeLeft--;
           updateTimerDisplay();
@@ -1635,6 +1669,40 @@ ${html}`;
         }
       }
 
+      function selectPart2Track(track) {
+        if (state.part2Track === track) return;
+        state.part2Track = track;
+        if (state.examData && state.examData.part2 && state.examData.part2.length > 3) {
+          state.examData.part2.forEach((q, idx) => {
+            if (track === "cs" && idx >= 5) {
+              delete state.answers.part2[q.id];
+            } else if (track === "ict" && (idx === 3 || idx === 4)) {
+              delete state.answers.part2[q.id];
+            }
+          });
+        }
+        const scrollY = window.scrollY;
+        render();
+        window.scrollTo(0, scrollY);
+      }
+
+      window.selectPart2Track = selectPart2Track;
+
+      function getActivePart2Questions() {
+        if (!state.examData || !state.examData.part2) return [];
+        const isType3 = (state.examData.examType || "2") === "3";
+        if (!isType3 || state.examData.part2.length <= 5) {
+          return state.examData.part2;
+        }
+        const track = state.part2Track || "cs";
+        return state.examData.part2.filter((q, idx) => {
+          if (idx < 3) return true; // A. Phần chung (Câu 1, 2, 3)
+          if (track === "cs") return idx === 3 || idx === 4; // Khoa học máy tính (Câu 4, 5)
+          if (track === "ict") return idx >= 5; // Tin học ứng dụng (Câu 6, 7)
+          return false;
+        });
+      }
+
       function saveAnswer(part, qId, value, subId = null) {
         if (part === "part1" || part === "part3") {
           state.answers[part][qId] = value;
@@ -1642,6 +1710,51 @@ ${html}`;
           if (!state.answers.part2[qId]) state.answers.part2[qId] = {};
           state.answers.part2[qId][subId] = value;
         }
+      }
+
+      function renderPart2QuestionBlock(q) {
+        if (!q) return "";
+        const subQuestions = Array.isArray(q.subQuestions) ? q.subQuestions : [];
+        if (subQuestions.length === 0) return "";
+        const qId = q.id !== undefined && q.id !== null ? q.id : "";
+        const cleanQuestion = q.question
+          ? q.question.replace(/^(Câu|Bài)\s*\d+[\s.:\-]+/i, "")
+          : "";
+        let blockHtml = `
+          <div class="question-block bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
+              <div class="p-6 border-b border-gray-100 bg-gray-50">
+                  <div class="text-gray-800 text-base whitespace-pre-wrap font-semibold leading-relaxed"><span class="font-bold text-blue-600 mr-1">Câu ${qId}:</span> ${escapeHtml(cleanQuestion)}</div>
+              </div>
+              <div class="p-2 sm:p-6">
+        `;
+        subQuestions.forEach((sq) => {
+          if (!sq) return;
+          const ans =
+            state.answers.part2 && state.answers.part2[qId] && state.answers.part2[qId][sq.id];
+          const isTrueChecked = ans === true ? "checked" : "";
+          const isFalseChecked = ans === false ? "checked" : "";
+          const rawSqText = sq.text !== null && sq.text !== undefined ? String(sq.text) : "";
+          const sqText = rawSqText.replace(/^[a-e][.:)\/]\s*/i, "");
+
+          blockHtml += `
+              <div class="flex items-start gap-3 sm:gap-4 py-3 sm:py-4 border-b border-gray-100 last:border-0">
+                  <div class="font-medium text-gray-800 w-5 pt-1.5 shrink-0">${escapeHtml(sq.id)})</div>
+                  <div class="flex gap-2 shrink-0">
+                      <label class="relative cursor-pointer">
+                          <input type="radio" name="p2_q${qId}_${sq.id}" value="true" ${isTrueChecked} onchange="saveAnswer('part2', ${qId}, true, '${sq.id}')" class="peer sr-only">
+                          <div class="px-3 sm:px-4 py-1.5 rounded-lg border border-gray-200 text-sm font-medium text-gray-600 peer-checked:bg-[#283553] peer-checked:text-white peer-checked:border-[#283553] transition-colors bg-white hover:bg-gray-50">Đúng</div>
+                      </label>
+                      <label class="relative cursor-pointer">
+                          <input type="radio" name="p2_q${qId}_${sq.id}" value="false" ${isFalseChecked} onchange="saveAnswer('part2', ${qId}, false, '${sq.id}')" class="peer sr-only">
+                          <div class="px-3 sm:px-4 py-1.5 rounded-lg border border-gray-200 text-sm font-medium text-gray-600 peer-checked:bg-[#283553] peer-checked:text-white peer-checked:border-[#283553] transition-colors bg-white hover:bg-gray-50">Sai</div>
+                      </label>
+                  </div>
+                  <div class="text-gray-800 text-sm leading-relaxed pt-1.5 whitespace-pre-wrap">${escapeHtml(sqText)}</div>
+              </div>
+          `;
+        });
+        blockHtml += `</div></div>`;
+        return blockHtml;
       }
 
       function renderExam() {
@@ -1664,8 +1777,8 @@ ${html}`;
                                     <svg class="w-6 h-6 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z"></path></svg>
                                 </div>
                                 <div>
-                                    <div class="font-bold text-gray-800 text-sm sm:text-base">${state.student.name}</div>
-                                    <div class="text-xs sm:text-sm text-gray-500">Lớp: ${state.student.className}</div>
+                                    <div class="font-bold text-gray-800 text-sm sm:text-base">${escapeHtml(state.student.name)}</div>
+                                    <div class="text-xs sm:text-sm text-gray-500">Lớp: ${escapeHtml(state.student.className)}</div>
                                 </div>
                             </div>
                             
@@ -1685,13 +1798,13 @@ ${html}`;
         let p1Points, p2Points, p3Points;
         
         if (examType === "3") {
-          p1Points = "15.0";
-          p2Points = "5.0";
+          p1Points = "12 điểm - mỗi câu 0,4 điểm";
+          p2Points = "8 điểm";
           p3Points = "0";
         } else {
-          p1Points = examType === "1" ? (state.examData.part3 && state.examData.part3.length > 0 ? "4.5" : "6.0") : "4.5";
-          p2Points = "4.0";
-          p3Points = examType === "1" ? (state.examData.part3 && state.examData.part3.length > 0 ? "1.5" : "0") : "1.5";
+          p1Points = (examType === "1" ? (state.examData.part3 && state.examData.part3.length > 0 ? "4.5" : "6.0") : "4.5") + " điểm";
+          p2Points = "4.0 điểm";
+          p3Points = (examType === "1" ? (state.examData.part3 && state.examData.part3.length > 0 ? "1.5" : "0") : "1.5") + " điểm";
         }
 
         // Part 1
@@ -1700,34 +1813,38 @@ ${html}`;
                   <div class="bg-white p-6 sm:p-8 rounded-2xl shadow-sm border border-gray-200">
                       <div class="flex items-center mb-6 pb-4 border-b border-gray-100">
                           <div class="bg-blue-600 text-white w-8 h-8 rounded-lg flex items-center justify-center font-bold mr-3">I</div>
-                          <h2 class="text-xl font-bold text-gray-800">Câu trắc nghiệm nhiều phương án lựa chọn <span class="text-sm font-normal text-gray-500 ml-2">(${p1Points} điểm)</span></h2>
+                          <h2 class="text-xl font-bold text-gray-800">Câu trắc nghiệm nhiều phương án lựa chọn <span class="text-sm font-normal text-gray-500 ml-2">(${p1Points})</span></h2>
                       </div>
                       <div class="space-y-8">
               `;
 
           state.examData.part1.forEach((q, index) => {
-            if (!q || !q.options) return;
-            const cleanQuestion = q.question.replace(/^(Câu|Bài)\s*\d+[\s.:\-]+/i, "");
+            if (!q) return;
+            const qId = q.id !== undefined && q.id !== null ? q.id : (index + 1);
+            const cleanQuestion = q.question
+              ? q.question.replace(/^(Câu|Bài)\s*\d+[\s.:\-]+/i, "")
+              : "";
+            const options = Array.isArray(q.options) ? q.options : [];
             html += `
                       <div class="question-block bg-white p-6 rounded-xl border border-gray-200 shadow-sm">
-                          <div class="text-gray-800 mb-6 whitespace-pre-wrap text-base leading-relaxed font-medium"><span class="font-bold text-blue-600 mr-1">Câu ${q.id}:</span> ${cleanQuestion}</div>
+                          <div class="text-gray-800 mb-6 whitespace-pre-wrap text-base leading-relaxed font-medium"><span class="font-bold text-blue-600 mr-1">Câu ${qId}:</span> ${escapeHtml(cleanQuestion)}</div>
                           <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
                   `;
-            q.options.forEach((opt, optIndex) => {
+            options.forEach((opt, optIndex) => {
               if (optIndex >= 4) return; // Bắt buộc chỉ hiển thị 4 đáp án (A, B, C, D)
               const isChecked =
-                state.answers.part1[q.id] === optIndex ? "checked" : "";
+                state.answers.part1 && state.answers.part1[qId] === optIndex ? "checked" : "";
               const letter = String.fromCharCode(65 + optIndex); // A, B, C, D
-              // Remove the A., B., C., D. prefix from the option text if it exists
-              const optText = opt.replace(/^[A-D][.:)\/]\s*/, "");
+              const rawOpt = opt !== null && opt !== undefined ? String(opt) : "";
+              const optText = rawOpt.replace(/^[A-D][.:)\/]\s*/, "");
 
               html += `
                           <label class="relative flex items-start p-3 cursor-pointer rounded-lg border border-gray-200 hover:bg-blue-50 hover:border-blue-300 transition-colors bg-white group">
-                              <input type="radio" name="p1_q${q.id}" value="${optIndex}" ${isChecked} onchange="saveAnswer('part1', ${q.id}, ${optIndex})" class="peer sr-only">
+                              <input type="radio" name="p1_q${qId}" value="${optIndex}" ${isChecked} onchange="saveAnswer('part1', ${qId}, ${optIndex})" class="peer sr-only">
                               <div class="w-6 h-6 rounded-full border border-gray-300 flex items-center justify-center mr-3 flex-shrink-0 bg-white text-gray-600 font-medium text-sm peer-checked:bg-blue-600 peer-checked:border-blue-600 peer-checked:text-white group-hover:border-blue-400 transition-all">
                                   ${letter}
                               </div>
-                              <span class="text-gray-700 text-sm leading-relaxed pt-0.5 whitespace-pre-wrap">${optText}</span>
+                              <span class="text-gray-700 text-sm leading-relaxed pt-0.5 whitespace-pre-wrap">${escapeHtml(optText)}</span>
                           </label>
                       `;
             });
@@ -1742,49 +1859,90 @@ ${html}`;
                   <div class="bg-white p-6 sm:p-8 rounded-2xl shadow-sm border border-gray-200">
                       <div class="flex items-center mb-6 pb-4 border-b border-gray-100">
                           <div class="bg-blue-600 text-white w-8 h-8 rounded-lg flex items-center justify-center font-bold mr-3">II</div>
-                          <h2 class="text-xl font-bold text-gray-800">Câu trắc nghiệm đúng sai <span class="text-sm font-normal text-gray-500 ml-2">(${p2Points} điểm)</span></h2>
+                          <h2 class="text-xl font-bold text-gray-800">Câu trắc nghiệm đúng sai <span class="text-sm font-normal text-gray-500 ml-2">(${p2Points})</span></h2>
                       </div>
-                      <div class="space-y-8">
-              `;
+          `;
 
-          state.examData.part2.forEach((q, index) => {
-            if (!q || !q.subQuestions) return;
-            const cleanQuestion = q.question.replace(/^(Câu|Bài)\s*\d+[\s.:\-]+/i, "");
+          if (examType === "3") {
+            const currentTrack = state.part2Track || "cs";
+            const commonQuestions = state.examData.part2.slice(0, 3);
+            const csQuestions = state.examData.part2.slice(3, 5);
+            const ictQuestions = state.examData.part2.slice(5);
+
             html += `
-                      <div class="question-block bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
-                          <div class="p-6 border-b border-gray-100 bg-gray-50">
-                              <div class="text-gray-800 text-base whitespace-pre-wrap font-semibold leading-relaxed"><span class="font-bold text-blue-600 mr-1">Câu ${q.id}:</span> ${cleanQuestion}</div>
+                      <div class="mb-6 bg-blue-50 border border-blue-200 rounded-xl p-4 text-sm text-gray-700 space-y-1.5">
+                          <div class="font-bold text-blue-800">Quy định làm bài và cách tính điểm Phần II (7 câu - 8 điểm):</div>
+                          <div>• <strong>A. Phần chung</strong>: 3 câu (Câu 1, 2, 3) - <em>Bắt buộc tất cả thí sinh phải làm.</em></div>
+                          <div>• <strong>B. Phần riêng</strong>: Thí sinh chọn 1 trong 2 định hướng: 
+                              <span class="font-semibold text-blue-700">Khoa học máy tính (Câu 4, 5)</span> hoặc 
+                              <span class="font-semibold text-blue-700">Tin học ứng dụng (Câu 6, 7)</span>.
                           </div>
-                          <div class="p-2 sm:p-6">
-                  `;
-            q.subQuestions.forEach((sq) => {
-              const ans =
-                state.answers.part2[q.id] && state.answers.part2[q.id][sq.id];
-              const isTrueChecked = ans === true ? "checked" : "";
-              const isFalseChecked = ans === false ? "checked" : "";
+                          <div class="mt-2 pt-2 border-t border-blue-200 text-xs sm:text-sm text-gray-600">
+                              • Mỗi câu gồm 04 ý a, b, c, d, điểm tối đa là <strong>1,6 điểm/câu</strong>:
+                              Đúng 1 ý: <strong>0,3đ</strong> | Đúng 2 ý: <strong>0,6đ</strong> | Đúng 3 ý: <strong>1,0đ</strong> | Đúng 4 ý: <strong>1,6đ</strong>
+                          </div>
+                      </div>
 
-              const sqText = sq.text.replace(/^[a-e][.:)\/]\s*/i, "");
+                      <!-- A. Phần chung -->
+                      <div class="mb-8">
+                          <div class="bg-indigo-50 border-l-4 border-indigo-600 p-4 rounded-r-xl mb-4">
+                              <h3 class="text-base sm:text-lg font-bold text-indigo-900">A. Phần chung dành cho tất cả các thí sinh (3 câu: Câu 1, 2, 3 - Bắt buộc phải làm)</h3>
+                          </div>
+                          <div class="space-y-6">
+                              ${commonQuestions.map((q) => renderPart2QuestionBlock(q)).join("")}
+                          </div>
+                      </div>
 
-              html += `
-                          <div class="flex items-start gap-3 sm:gap-4 py-3 sm:py-4 border-b border-gray-100 last:border-0">
-                              <div class="font-medium text-gray-800 w-5 pt-1.5 shrink-0">${sq.id})</div>
-                              <div class="flex gap-2 shrink-0">
-                                  <label class="relative cursor-pointer">
-                                      <input type="radio" name="p2_q${q.id}_${sq.id}" value="true" ${isTrueChecked} onchange="saveAnswer('part2', ${q.id}, true, '${sq.id}')" class="peer sr-only">
-                                      <div class="px-3 sm:px-4 py-1.5 rounded-lg border border-gray-200 text-sm font-medium text-gray-600 peer-checked:bg-[#283553] peer-checked:text-white peer-checked:border-[#283553] transition-colors bg-white hover:bg-gray-50">Đúng</div>
-                                  </label>
-                                  <label class="relative cursor-pointer">
-                                      <input type="radio" name="p2_q${q.id}_${sq.id}" value="false" ${isFalseChecked} onchange="saveAnswer('part2', ${q.id}, false, '${sq.id}')" class="peer sr-only">
-                                      <div class="px-3 sm:px-4 py-1.5 rounded-lg border border-gray-200 text-sm font-medium text-gray-600 peer-checked:bg-[#283553] peer-checked:text-white peer-checked:border-[#283553] transition-colors bg-white hover:bg-gray-50">Sai</div>
-                                  </label>
+                      <!-- B. Phần riêng -->
+                      <div>
+                          <div class="bg-amber-50 border-l-4 border-amber-500 p-4 rounded-r-xl mb-6">
+                              <h3 class="text-base sm:text-lg font-bold text-amber-900">B. Phần riêng (Thí sinh chọn 1 trong 2 định hướng):</h3>
+                              <p class="text-xs sm:text-sm text-amber-800 mt-1 mb-3">Vui lòng bấm chọn định hướng bạn làm bài bên dưới (Hệ thống sẽ chỉ hiển thị đúng 2 câu của phần bạn chọn):</p>
+                              <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                                  <button type="button" onclick="selectPart2Track('cs')" class="flex items-center justify-between p-4 rounded-xl border-2 font-bold text-sm transition ${currentTrack === 'cs' ? 'border-blue-600 bg-blue-600 text-white shadow-md ring-2 ring-blue-300' : 'border-gray-300 bg-white text-gray-700 hover:border-blue-400 hover:bg-gray-50'}">
+                                      <div class="flex items-center text-left">
+                                          <div class="w-5 h-5 rounded-full border-2 mr-3 flex items-center justify-center shrink-0 ${currentTrack === 'cs' ? 'border-white bg-white text-blue-600' : 'border-gray-400'}">
+                                              ${currentTrack === 'cs' ? '<svg class="w-3.5 h-3.5" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clip-rule="evenodd"></path></svg>' : ''}
+                                          </div>
+                                          <div>
+                                              <div class="font-bold">1. Khoa học máy tính</div>
+                                              <div class="text-xs ${currentTrack === 'cs' ? 'text-blue-100' : 'text-gray-500'} font-normal">Hiển thị Câu 4 & Câu 5</div>
+                                          </div>
+                                      </div>
+                                      <span class="text-xs px-2.5 py-1 rounded-full shrink-0 ${currentTrack === 'cs' ? 'bg-white/20 text-white font-semibold' : 'bg-gray-100 text-gray-600'}">${currentTrack === 'cs' ? '✓ Đang làm' : 'Bấm chọn'}</span>
+                                  </button>
+                                  <button type="button" onclick="selectPart2Track('ict')" class="flex items-center justify-between p-4 rounded-xl border-2 font-bold text-sm transition ${currentTrack === 'ict' ? 'border-blue-600 bg-blue-600 text-white shadow-md ring-2 ring-blue-300' : 'border-gray-300 bg-white text-gray-700 hover:border-blue-400 hover:bg-gray-50'}">
+                                      <div class="flex items-center text-left">
+                                          <div class="w-5 h-5 rounded-full border-2 mr-3 flex items-center justify-center shrink-0 ${currentTrack === 'ict' ? 'border-white bg-white text-blue-600' : 'border-gray-400'}">
+                                              ${currentTrack === 'ict' ? '<svg class="w-3.5 h-3.5" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clip-rule="evenodd"></path></svg>' : ''}
+                                          </div>
+                                          <div>
+                                              <div class="font-bold">2. Tin học ứng dụng</div>
+                                              <div class="text-xs ${currentTrack === 'ict' ? 'text-blue-100' : 'text-gray-500'} font-normal">Hiển thị Câu 6 & Câu 7</div>
+                                          </div>
+                                      </div>
+                                      <span class="text-xs px-2.5 py-1 rounded-full shrink-0 ${currentTrack === 'ict' ? 'bg-white/20 text-white font-semibold' : 'bg-gray-100 text-gray-600'}">${currentTrack === 'ict' ? '✓ Đang làm' : 'Bấm chọn'}</span>
+                                  </button>
                               </div>
-                              <div class="text-gray-800 text-sm leading-relaxed pt-1.5 whitespace-pre-wrap">${sqText}</div>
                           </div>
-                      `;
+
+                          <!-- Chỉ hiển thị đúng 2 câu của định hướng học sinh đã chọn -->
+                          <div class="space-y-6">
+                              ${currentTrack === 'cs'
+                                ? csQuestions.map((q) => renderPart2QuestionBlock(q)).join("")
+                                : ictQuestions.map((q) => renderPart2QuestionBlock(q)).join("")
+                              }
+                          </div>
+                      </div>
+                  </div>
+            `;
+          } else {
+            html += `<div class="space-y-8">`;
+            state.examData.part2.forEach((q) => {
+              html += renderPart2QuestionBlock(q);
             });
             html += `</div></div>`;
-          });
-          html += `</div></div>`;
+          }
         }
 
         // Part 3
@@ -1793,21 +1951,24 @@ ${html}`;
                   <div class="bg-white p-6 sm:p-8 rounded-2xl shadow-sm border border-gray-200">
                       <div class="flex items-center mb-6 pb-4 border-b border-gray-100">
                           <div class="bg-blue-600 text-white w-8 h-8 rounded-lg flex items-center justify-center font-bold mr-3">III</div>
-                          <h2 class="text-xl font-bold text-gray-800">Câu trắc nghiệm trả lời ngắn <span class="text-sm font-normal text-gray-500 ml-2">(${p3Points} điểm)</span></h2>
+                          <h2 class="text-xl font-bold text-gray-800">Câu trắc nghiệm trả lời ngắn <span class="text-sm font-normal text-gray-500 ml-2">(${p3Points})</span></h2>
                       </div>
                       <div class="space-y-6">
               `;
 
           state.examData.part3.forEach((q, index) => {
             if (!q) return;
-            const cleanQuestion = q.question.replace(/^(Câu|Bài)\s*\d+[\s.:\-]+/i, "");
-            const val = state.answers.part3[q.id] || "";
+            const qId = q.id !== undefined && q.id !== null ? q.id : (index + 1);
+            const cleanQuestion = q.question
+              ? q.question.replace(/^(Câu|Bài)\s*\d+[\s.:\-]+/i, "")
+              : "";
+            const val = (state.answers.part3 && state.answers.part3[qId]) || "";
             html += `
                       <div class="question-block bg-white p-6 rounded-xl border border-gray-200 shadow-sm">
-                          <div class="text-gray-800 mb-6 whitespace-pre-wrap text-base leading-relaxed font-medium"><span class="font-bold text-blue-600 mr-1">Câu ${q.id}:</span> ${cleanQuestion}</div>
+                          <div class="text-gray-800 mb-6 whitespace-pre-wrap text-base leading-relaxed font-medium"><span class="font-bold text-blue-600 mr-1">Câu ${qId}:</span> ${escapeHtml(cleanQuestion)}</div>
                           <div class="flex items-center bg-gray-50 p-4 rounded-lg border border-gray-100">
                               <span class="text-gray-600 font-bold mr-3 shrink-0">Đáp án:</span>
-                              <input type="text" value="${val}" oninput="saveAnswer('part3', ${q.id}, this.value)" class="w-full px-4 py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition font-medium text-gray-800 bg-white" placeholder="Nhập câu trả lời...">
+                              <input type="text" value="${escapeHtml(val)}" oninput="saveAnswer('part3', ${qId}, this.value)" class="w-full px-4 py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition font-medium text-gray-800 bg-white" placeholder="Nhập câu trả lời...">
                           </div>
                       </div>
                   `;
@@ -1845,36 +2006,53 @@ ${html}`;
         let correctP2 = 0;
         let correctP3 = 0;
         let wrongAnswers = [];
+        const isType3 = (state.examData.examType || "2") === "3";
 
         // Part 1
         state.examData.part1.forEach((q) => {
-          if (state.answers.part1[q.id] === q.answer) {
-            const p1Point = state.examData.examType === "3" ? 0.5 : 0.25;
+          if (!q) return;
+          const cleanQ = q.question ? q.question.replace(/^(Câu|Bài)\s*\d+[\s.:\-]+/i, "") : "";
+          if (state.answers.part1 && state.answers.part1[q.id] === q.answer) {
+            const p1Point = isType3 ? 0.4 : 0.25;
             score += p1Point;
             correctP1++;
           } else {
-            let correctAnsText = `${String.fromCharCode(65 + q.answer)}. ${q.options[q.answer].replace(/^[A-D][.:)\/]\s*/, "")}`;
+            const optAnswer = q.options && q.options[q.answer] !== undefined
+              ? String(q.options[q.answer]).replace(/^[A-D][.:)\/]\s*/, "")
+              : "";
+            let correctAnsText = `${String.fromCharCode(65 + q.answer)}. ${escapeHtml(optAnswer)}`;
             if (q.explanation) {
-               correctAnsText += `<br><span class="text-gray-500 italic text-xs mt-1 block font-normal">Giải thích: ${q.explanation}</span>`;
+               correctAnsText += `<br><span class="text-gray-500 italic text-xs mt-1 block font-normal">Giải thích: ${escapeHtml(q.explanation)}</span>`;
+            }
+            let userAnsText = "Chưa trả lời";
+            if (state.answers.part1 && state.answers.part1[q.id] !== undefined && q.options && q.options[state.answers.part1[q.id]] !== undefined) {
+              const userOpt = String(q.options[state.answers.part1[q.id]]).replace(/^[A-D][.:)\/]\s*/, "");
+              userAnsText = `${String.fromCharCode(65 + state.answers.part1[q.id])}. ${escapeHtml(userOpt)}`;
             }
             wrongAnswers.push({
               part: "Phần I",
-              question: `Câu ${q.id}: ${q.question.replace(/^(Câu|Bài)\s*\d+[\s.:\-]+/i, "")}`,
-              userAnswer:
-                state.answers.part1[q.id] !== undefined
-                  ? `${String.fromCharCode(65 + state.answers.part1[q.id])}. ${q.options[state.answers.part1[q.id]].replace(/^[A-D][.:)\/]\s*/, "")}`
-                  : "Chưa trả lời",
+              question: `Câu ${q.id}: ${escapeHtml(cleanQ)}`,
+              userAnswer: userAnsText,
               correctAnswer: correctAnsText,
             });
           }
         });
 
         // Part 2
-        state.examData.part2.forEach((q) => {
+        const activePart2 = getActivePart2Questions();
+        activePart2.forEach((q) => {
+          if (!q) return;
           let correctCount = 0;
-          q.subQuestions.forEach((sq) => {
+          const qIndex = state.examData.part2.findIndex((item) => item.id === q.id);
+          const partLabel = isType3
+            ? (qIndex < 3 ? "Phần II (Phần chung)" : (state.part2Track === "ict" ? "Phần II (Tin học ứng dụng)" : "Phần II (Khoa học máy tính)"))
+            : "Phần II";
+
+          const subQuestions = Array.isArray(q.subQuestions) ? q.subQuestions : [];
+          subQuestions.forEach((sq) => {
+            if (!sq) return;
             const userAns =
-              state.answers.part2[q.id] && state.answers.part2[q.id][sq.id];
+              state.answers.part2 && state.answers.part2[q.id] && state.answers.part2[q.id][sq.id];
             if (userAns === sq.answer) {
               correctCount++;
               correctP2++;
@@ -1882,12 +2060,12 @@ ${html}`;
               let correctAnsText = sq.answer ? "Đúng" : "Sai";
               let explanation = sq.explanation || q.explanation;
               if (explanation) {
-                 correctAnsText += `<br><span class="text-gray-500 italic text-xs mt-1 block font-normal">Giải thích: ${explanation}</span>`;
+                 correctAnsText += `<br><span class="text-gray-500 italic text-xs mt-1 block font-normal">Giải thích: ${escapeHtml(explanation)}</span>`;
               }
-              
+              const cleanSqText = sq.text ? String(sq.text).replace(/^[a-e][.:)\/]\s*/i, "") : "";
               wrongAnswers.push({
-                part: "Phần II",
-                question: `Câu ${q.id} - Ý ${sq.id}: ${sq.text.replace(/^[a-e][.:)\/]\s*/i, "")}`,
+                part: partLabel,
+                question: `Câu ${q.id} - Ý ${sq.id}: ${escapeHtml(cleanSqText)}`,
                 userAnswer:
                   userAns !== undefined
                     ? userAns
@@ -1899,36 +2077,48 @@ ${html}`;
             }
           });
 
-          if (correctCount === 1) score += 0.1;
-          else if (correctCount === 2) score += 0.25;
-          else if (correctCount === 3) score += 0.5;
-          else if (correctCount === 4) score += 1.0;
-        });
-
-        // Part 3
-        state.examData.part3.forEach((q) => {
-          const userAns = (state.answers.part3[q.id] || "")
-            .toString()
-            .trim()
-            .toLowerCase();
-          const correctAns = q.answer.toString().trim().toLowerCase();
-          if (userAns === correctAns) {
-            score += 0.25;
-            correctP3++;
+          if (isType3) {
+            if (correctCount === 1) score += 0.3;
+            else if (correctCount === 2) score += 0.6;
+            else if (correctCount === 3) score += 1.0;
+            else if (correctCount === 4) score += 1.6;
           } else {
-            let correctAnsText = q.answer;
-            if (q.explanation) {
-               correctAnsText += `<br><span class="text-gray-500 italic text-xs mt-1 block font-normal">Giải thích: ${q.explanation}</span>`;
-            }
-            wrongAnswers.push({
-              part: "Phần III",
-              question: `Câu ${q.id}: ${q.question.replace(/^(Câu|Bài)\s*\d+[\s.:\-]+/i, "")}`,
-              userAnswer: state.answers.part3[q.id] || "Chưa trả lời",
-              correctAnswer: correctAnsText,
-            });
+            if (correctCount === 1) score += 0.1;
+            else if (correctCount === 2) score += 0.25;
+            else if (correctCount === 3) score += 0.5;
+            else if (correctCount === 4) score += 1.0;
           }
         });
 
+        // Part 3
+        if (state.examData.part3 && Array.isArray(state.examData.part3)) {
+          state.examData.part3.forEach((q) => {
+            if (!q) return;
+            const userAns = ((state.answers.part3 && state.answers.part3[q.id]) || "")
+              .toString()
+              .trim()
+              .toLowerCase();
+            const correctAns = (q.answer !== undefined && q.answer !== null ? q.answer : "").toString().trim().toLowerCase();
+            if (userAns && userAns === correctAns) {
+              score += 0.25;
+              correctP3++;
+            } else {
+              let correctAnsText = escapeHtml(q.answer);
+              if (q.explanation) {
+                 correctAnsText += `<br><span class="text-gray-500 italic text-xs mt-1 block font-normal">Giải thích: ${escapeHtml(q.explanation)}</span>`;
+              }
+              const cleanQ = q.question ? q.question.replace(/^(Câu|Bài)\s*\d+[\s.:\-]+/i, "") : "";
+              wrongAnswers.push({
+                part: "Phần III",
+                question: `Câu ${q.id}: ${escapeHtml(cleanQ)}`,
+                userAnswer: escapeHtml((state.answers.part3 && state.answers.part3[q.id]) || "Chưa trả lời"),
+                correctAnswer: correctAnsText,
+              });
+            }
+          });
+        }
+
+        score = Math.round(score * 100) / 100;
         state.score = score;
         state.results = { correctP1, correctP2, correctP3, wrongAnswers };
 
@@ -1966,6 +2156,7 @@ ${html}`;
 
       function renderResult() {
         const { correctP1, correctP2, correctP3, wrongAnswers } = state.results;
+        const activePart2 = getActivePart2Questions();
 
         let html = `
                 <div class="min-h-screen bg-gray-50 py-12 px-4">
@@ -1976,9 +2167,9 @@ ${html}`;
                             <h1 class="text-3xl font-bold text-gray-800 mb-2 mt-2">KẾT QUẢ BÀI THI</h1>
                             <div class="inline-flex items-center justify-center px-4 py-1.5 bg-gray-100 rounded-full mb-8">
                                 <svg class="w-4 h-4 text-gray-500 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z"></path></svg>
-                                <span class="text-gray-700 font-medium">${state.student.name}</span>
+                                <span class="text-gray-700 font-medium">${escapeHtml(state.student.name)}</span>
                                 <span class="mx-2 text-gray-300">|</span>
-                                <span class="text-gray-700 font-medium">Lớp: ${state.student.className}</span>
+                                <span class="text-gray-700 font-medium">Lớp: ${escapeHtml(state.student.className)}</span>
                             </div>
                             
                             <div class="flex justify-center mb-10">
@@ -2001,7 +2192,7 @@ ${html}`;
                                 </div>
                                 <div class="bg-green-50 rounded-2xl p-4">
                                     <div class="text-sm text-green-600 font-semibold mb-1 uppercase tracking-wider">Phần II</div>
-                                    <div class="text-2xl font-bold text-gray-800">${correctP2}<span class="text-base font-medium text-gray-400">/${state.examData.part2.reduce((acc, q) => acc + q.subQuestions.length, 0)}</span></div>
+                                    <div class="text-2xl font-bold text-gray-800">${correctP2}<span class="text-base font-medium text-gray-400">/${activePart2.reduce((acc, q) => acc + q.subQuestions.length, 0)}</span></div>
                                 </div>
                                 ${state.examData.examType === "2" || (state.examData.part3 && state.examData.part3.length > 0) ? `
                                 <div class="bg-purple-50 rounded-2xl p-4">
