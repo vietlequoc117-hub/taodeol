@@ -90,6 +90,530 @@
       }
       window.escapeHtml = escapeHtml;
 
+      function isCodeBlockText(text) {
+        if (!text) return false;
+        const lines = String(text).split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
+        if (lines.length < 2) return false;
+        const codePatterns = [
+          /\b(for|while|if|elif|else|def|return|break|continue|range|print|input|int|float|double|long|void|char|string|bool|cout|cin|include|using\s+namespace)\b/,
+          /[+\-*/%]=|==|!=|<=|>=|<<|>>|\+\+|--|\/\//,
+          /^[a-zA-Z_]\w*\s*=\s*.+/,
+          /[{};:]$/
+        ];
+        let matchCount = 0;
+        for (const line of lines) {
+          if (codePatterns.some((p) => p.test(line))) matchCount++;
+        }
+        return matchCount >= 2;
+      }
+
+      function indentCppCode(cppText) {
+        if (!cppText) return { formatted: "", nonBraceLevels: [] };
+        const rawLines = String(cppText).split(/\r?\n/);
+        const cleanLines = rawLines.map((l) => l.trim()).filter((l) => l.length > 0);
+
+        let braceLevel = 0;
+        let singleLineIndent = 0;
+        const formattedLines = [];
+        const nonBraceLevels = [];
+
+        for (let i = 0; i < cleanLines.length; i++) {
+          const line = cleanLines[i];
+          if (line.startsWith("}")) {
+            braceLevel = Math.max(0, braceLevel - 1);
+            singleLineIndent = 0;
+          } else if (line.startsWith("{")) {
+            singleLineIndent = 0;
+          }
+
+          const currentIndent = braceLevel + singleLineIndent;
+          formattedLines.push("    ".repeat(currentIndent) + line);
+
+          if (line !== "{" && line !== "}" && !/^}\s*else\b/.test(line)) {
+            nonBraceLevels.push(currentIndent);
+          }
+
+          const nextLine = cleanLines[i + 1] || "";
+          if (line.endsWith("{")) {
+            braceLevel++;
+            singleLineIndent = 0;
+          } else if (
+            /^(if|else\s+if|else|for|while)\b/.test(line) &&
+            !line.endsWith(";") &&
+            !nextLine.startsWith("{")
+          ) {
+            singleLineIndent++;
+          } else {
+            singleLineIndent = 0;
+          }
+        }
+
+        return {
+          formatted: formattedLines.join("\n"),
+          nonBraceLevels
+        };
+      }
+
+      function hasValidPythonIndentation(nonEmptyRawLines) {
+        let hasColon = false;
+        for (let i = 0; i < nonEmptyRawLines.length; i++) {
+          const line = nonEmptyRawLines[i].replace(/\t/g, "    ");
+          const trimmed = line.trim();
+          if (trimmed.endsWith(":")) {
+            hasColon = true;
+            if (i + 1 >= nonEmptyRawLines.length) return false;
+            const nextLine = nonEmptyRawLines[i + 1].replace(/\t/g, "    ");
+            const currSpaces = line.match(/^ */)[0].length;
+            const nextSpaces = nextLine.match(/^ */)[0].length;
+            if (nextSpaces <= currSpaces) return false;
+          }
+        }
+        return hasColon;
+      }
+
+      function indentPythonCode(pyText, cppNonBraceLevels = []) {
+        if (!pyText) return "";
+        const rawLines = String(pyText).split(/\r?\n/);
+        const nonEmptyRaw = rawLines.filter((l) => l.trim().length > 0);
+        if (hasValidPythonIndentation(nonEmptyRaw)) {
+          return nonEmptyRaw.map((l) => l.replace(/\t/g, "    ").trimEnd()).join("\n");
+        }
+
+        const cleanLines = nonEmptyRaw.map((l) => l.trim());
+        if (cppNonBraceLevels && cppNonBraceLevels.length === cleanLines.length) {
+          return cleanLines.map((line, idx) => "    ".repeat(cppNonBraceLevels[idx]) + line).join("\n");
+        }
+
+        // Fallback heuristic for standalone Python code without leading spaces
+        let indent = 0;
+        const result = [];
+        for (let i = 0; i < cleanLines.length; i++) {
+          const line = cleanLines[i];
+          if (/^(elif|else|except|finally)\b/.test(line)) {
+            indent = Math.max(0, indent - 1);
+          } else if (/^print\s*\(/.test(line) && i === cleanLines.length - 1) {
+            indent = 0;
+          }
+          result.push("    ".repeat(indent) + line);
+          if (line.endsWith(":")) {
+            indent++;
+          } else if (/^(continue|break|return|pass)\b/.test(line)) {
+            indent = Math.max(0, indent - 1);
+          }
+        }
+        return result.join("\n");
+      }
+
+      function autoIndentCodePair(pyText, cppText) {
+        const cppRes = indentCppCode(cppText);
+        const formattedPy = indentPythonCode(pyText, cppRes.nonBraceLevels);
+        return [formattedPy, cppRes.formatted];
+      }
+
+      function renderTableFromRows(rows) {
+        if (!Array.isArray(rows) || rows.length === 0) return "";
+        const clonedRows = rows.map((r) => (Array.isArray(r) ? [...r] : [String(r)]));
+
+        // If 2-column Python/C++ table, ensure indentation is preserved/restored
+        if (clonedRows.length >= 2 && clonedRows[0].length === 2 && clonedRows[1].length === 2) {
+          const h0 = String(clonedRows[0][0] || "").toLowerCase();
+          const h1 = String(clonedRows[0][1] || "").toLowerCase();
+          if (
+            (h0.includes("python") && (h1.includes("c++") || h1.includes("c/c++"))) ||
+            (isCodeBlockText(clonedRows[1][0]) && isCodeBlockText(clonedRows[1][1]))
+          ) {
+            const [pyFormatted, cppFormatted] = autoIndentCodePair(clonedRows[1][0], clonedRows[1][1]);
+            clonedRows[1][0] = pyFormatted;
+            clonedRows[1][1] = cppFormatted;
+          }
+        }
+
+        let tableHtml = `<div class="my-3 overflow-x-auto"><table class="w-full border-collapse border border-gray-800 bg-white text-gray-900">`;
+        clonedRows.forEach((row, rIdx) => {
+          if (!Array.isArray(row)) return;
+          tableHtml += `<tr>`;
+          const isHeaderRow = rIdx === 0 && clonedRows.length > 1 && !row.some((cell) => isCodeBlockText(cell));
+          const colWidthClass = row.length === 2 ? "w-1/2" : "";
+          row.forEach((cell) => {
+            let cellStr = cell !== null && cell !== undefined ? String(cell) : "";
+            if (isHeaderRow) {
+              tableHtml += `<th class="border border-gray-800 px-3 sm:px-4 py-2 font-bold text-left bg-gray-50 text-gray-900 text-sm sm:text-base ${colWidthClass}">${escapeHtml(cellStr)}</th>`;
+            } else {
+              const isCode = isCodeBlockText(cellStr);
+              if (isCode) {
+                if (/[{};]|#include|\bcout\b/.test(cellStr)) {
+                  cellStr = indentCppCode(cellStr).formatted;
+                } else if (/\b(def|for|while|if|elif|else)\b.*:/.test(cellStr)) {
+                  cellStr = indentPythonCode(cellStr);
+                }
+                tableHtml += `<td class="border border-gray-800 px-3 sm:px-4 py-3 align-top font-mono font-normal text-xs sm:text-sm text-gray-900 whitespace-pre leading-loose ${colWidthClass}" style="font-family: 'Courier New', Courier, monospace;">${escapeHtml(cellStr)}</td>`;
+              } else {
+                tableHtml += `<td class="border border-gray-800 px-3 sm:px-4 py-2 align-top font-normal text-sm text-gray-800 whitespace-pre-wrap leading-relaxed ${colWidthClass}">${escapeHtml(cellStr)}</td>`;
+              }
+            }
+          });
+          tableHtml += `</tr>`;
+        });
+        tableHtml += `</table></div>`;
+        return tableHtml;
+      }
+
+      function extractCellTextFromDom(cell) {
+        const blockTags = ["P", "H1", "H2", "H3", "H4", "H5", "H6", "LI", "DIV", "PRE"];
+        const leafBlocks = [];
+
+        function collectLeafBlocks(node) {
+          const children = Array.from(node.children || []);
+          const hasBlockChild = children.some((c) =>
+            [...blockTags, "TABLE", "TR", "TBODY", "THEAD", "TD", "TH", "UL", "OL"].includes(c.tagName)
+          );
+          if (!hasBlockChild) {
+            leafBlocks.push(node);
+          } else {
+            children.forEach((c) => collectLeafBlocks(c));
+          }
+        }
+
+        collectLeafBlocks(cell);
+        const lines = [];
+        leafBlocks.forEach((block) => {
+          const parts = block.innerHTML.split(/<br\s*\/?>/i);
+          parts.forEach((part) => {
+            const temp = document.createElement("div");
+            temp.innerHTML = part.replace(/\t/g, "    ").replace(/&nbsp;/gi, " ");
+            const lineText = temp.textContent.replace(/\u00a0/g, " ").trimEnd();
+            if (lineText.trim().length > 0) {
+              lines.push(lineText);
+            }
+          });
+        });
+        return lines.join("\n");
+      }
+
+      function extractRowsFromTableElement(tableEl) {
+        const rows = [];
+        const trList = Array.from(tableEl.querySelectorAll("tr"));
+        trList.forEach((tr) => {
+          const cells = Array.from(tr.querySelectorAll("td, th"));
+          if (cells.length === 0) return;
+          const rowData = cells.map((cell) => extractCellTextFromDom(cell));
+          if (rowData.some((c) => c.trim().length > 0)) {
+            rows.push(rowData);
+          }
+        });
+        return rows;
+      }
+
+      function isQuestionContentTable(tableEl) {
+        const rows = extractRowsFromTableElement(tableEl);
+        if (rows.length === 0) return false;
+        const allCells = rows.flat().map((c) => c.trim()).filter(Boolean);
+        if (allCells.length === 0) return false;
+
+        // Check if table is a wrapper around multiple questions
+        let questionHeaderCount = 0;
+        allCells.forEach((c) => {
+          const lines = c.split(/\r?\n/);
+          lines.forEach((l) => {
+            if (/^(?:câu|bài)\s*\d+[\s.:\-)]/i.test(l.trim())) {
+              questionHeaderCount++;
+            }
+          });
+        });
+        if (questionHeaderCount >= 2) return false;
+
+        // Check if table is purely an A, B, C, D options layout grid
+        if (allCells.length <= 4 && allCells.every((c) => /^[A-D][.:)\/]\s*/.test(c))) {
+          return false;
+        }
+
+        return true;
+      }
+
+      function preprocessTablesInHtml(html) {
+        const parser = new DOMParser();
+        const doc = parser.parseFromString(html, "text/html");
+        const extractedTables = [];
+        const tables = Array.from(doc.body.querySelectorAll("table"));
+
+        tables.forEach((table) => {
+          if (!isQuestionContentTable(table)) return;
+          const rows = extractRowsFromTableElement(table);
+          if (rows.length === 0) return;
+
+          // If 2-column Python/C++ table, pre-format code indentation
+          if (rows.length >= 2 && rows[0].length === 2 && rows[1].length === 2) {
+            const h0 = String(rows[0][0] || "").toLowerCase();
+            const h1 = String(rows[0][1] || "").toLowerCase();
+            if (
+              (h0.includes("python") && (h1.includes("c++") || h1.includes("c/c++"))) ||
+              (isCodeBlockText(rows[1][0]) && isCodeBlockText(rows[1][1]))
+            ) {
+              const [pyFormatted, cppFormatted] = autoIndentCodePair(rows[1][0], rows[1][1]);
+              rows[1][0] = pyFormatted;
+              rows[1][1] = cppFormatted;
+            }
+          }
+
+          const idx = extractedTables.length;
+          // Find preceding question text for fallback matching
+          let prevEl = table.previousElementSibling;
+          let prevQuestionHeader = "";
+          while (prevEl) {
+            const txt = (prevEl.textContent || "").trim();
+            const m = txt.match(/^(?:câu|bài)\s*(\d+)/i);
+            if (m) {
+              prevQuestionHeader = txt;
+              break;
+            }
+            prevEl = prevEl.previousElementSibling;
+          }
+
+          extractedTables.push({
+            idx,
+            token: `[[TABLE_${idx}]]`,
+            rows,
+            prevQuestionHeader
+          });
+
+          const p = doc.createElement("p");
+          p.textContent = `[[TABLE_${idx}]]`;
+          table.parentNode.replaceChild(p, table);
+        });
+
+        return {
+          processedHtml: doc.body.innerHTML,
+          extractedTables
+        };
+      }
+
+      function restoreTablesInExamData(examData, extractedTables) {
+        if (!examData || !Array.isArray(extractedTables) || extractedTables.length === 0) {
+          return examData;
+        }
+
+        const usedTokens = new Set();
+
+        function replaceTokensInStr(str) {
+          if (!str || typeof str !== "string") return str;
+          let out = str;
+          extractedTables.forEach((t) => {
+            if (out.includes(t.token)) {
+              usedTokens.add(t.idx);
+              out = out.split(t.token).join(`[[TABLE]]${JSON.stringify(t.rows)}[[/TABLE]]`);
+            }
+          });
+          return out;
+        }
+
+        ["part1", "part2", "part3"].forEach((partKey) => {
+          if (!Array.isArray(examData[partKey])) return;
+          examData[partKey].forEach((q) => {
+            if (!q) return;
+            if (q.question) q.question = replaceTokensInStr(q.question);
+            if (q.explanation) q.explanation = replaceTokensInStr(q.explanation);
+            if (Array.isArray(q.subQuestions)) {
+              q.subQuestions.forEach((sq) => {
+                if (sq && sq.text) sq.text = replaceTokensInStr(sq.text);
+              });
+            }
+          });
+        });
+
+        // Fallback: if any table token was omitted by AI, match by preceding question header
+        extractedTables.forEach((t) => {
+          if (usedTokens.has(t.idx) || !t.prevQuestionHeader) return;
+          const m = t.prevQuestionHeader.match(/^(?:câu|bài)\s*(\d+)/i);
+          if (!m) return;
+          const qNum = parseInt(m[1], 10);
+          const snippet = t.prevQuestionHeader.replace(/^(?:câu|bài)\s*\d+[\s.:\-)]*/i, "").substring(0, 30).trim();
+          ["part1", "part2", "part3"].forEach((partKey) => {
+            if (usedTokens.has(t.idx) || !Array.isArray(examData[partKey])) return;
+            examData[partKey].forEach((q) => {
+              if (usedTokens.has(t.idx) || !q || !q.question) return;
+              if (q.id === qNum && (!snippet || q.question.includes(snippet))) {
+                if (!q.question.includes("[[TABLE]]")) {
+                  q.question += `\n[[TABLE]]${JSON.stringify(t.rows)}[[/TABLE]]`;
+                  usedTokens.add(t.idx);
+                }
+              }
+            });
+          });
+        });
+
+        return examData;
+      }
+
+      function normalizeQuestionTables(rawText) {
+        if (!rawText) return "";
+        let text = String(rawText);
+
+        // 1. Convert raw HTML <table>...</table> blocks if present
+        if (/<table[\s>]/i.test(text) && /<\/table>/i.test(text)) {
+          text = text.replace(/<table[\s\S]*?<\/table>/gi, (tableHtml) => {
+            const parser = new DOMParser();
+            const doc = parser.parseFromString(tableHtml, "text/html");
+            const tableEl = doc.querySelector("table");
+            if (!tableEl) return tableHtml;
+            const rows = extractRowsFromTableElement(tableEl);
+            return rows.length > 0 ? `\n[[TABLE]]${JSON.stringify(rows)}[[/TABLE]]\n` : tableHtml;
+          });
+        }
+
+        if (text.includes("[[TABLE]]")) {
+          return text;
+        }
+
+        // 2. Convert Markdown tables if present
+        const mdLines = text.split(/\r?\n/);
+        const newMdLines = [];
+        let i = 0;
+        while (i < mdLines.length) {
+          const line = mdLines[i].trim();
+          if (line.startsWith("|") && line.endsWith("|") && line.split("|").length >= 3) {
+            const tableLines = [];
+            while (i < mdLines.length && mdLines[i].trim().startsWith("|") && mdLines[i].trim().endsWith("|")) {
+              tableLines.push(mdLines[i].trim());
+              i++;
+            }
+            if (tableLines.length >= 2) {
+              const rows = [];
+              tableLines.forEach((tl) => {
+                if (/^\|[\s\-:|]+\|$/.test(tl)) return; // Skip separator row
+                const cells = tl
+                  .slice(1, -1)
+                  .split("|")
+                  .map((c) => c.replace(/<br\s*\/?>/gi, "\n").trim());
+                rows.push(cells);
+              });
+              if (rows.length > 0) {
+                newMdLines.push(`[[TABLE]]${JSON.stringify(rows)}[[/TABLE]]`);
+                continue;
+              }
+            }
+            newMdLines.push(...tableLines);
+          } else {
+            newMdLines.push(mdLines[i]);
+            i++;
+          }
+        }
+        text = newMdLines.join("\n");
+        if (text.includes("[[TABLE]]")) {
+          return text;
+        }
+
+        // 3. Detect flattened 2-column Python & C++ code tables (e.g. from already-saved exams)
+        const pyHeaderRegex = /((?:Đoạn\s+chương\s+trình|Chương\s+trình|Đoạn\s+lệnh|Đoạn\s+mã|Ngôn\s+ngữ(?:\s+lập\s+trình)?)\s+(?:viết\s+bằng\s+)?Python)/i;
+        const cppHeaderRegex = /((?:Đoạn\s+chương\s+trình|Chương\s+trình|Đoạn\s+lệnh|Đoạn\s+mã|Ngôn\s+ngữ(?:\s+lập\s+trình)?)\s+(?:viết\s+bằng\s+)?C\+\+)/i;
+
+        if (pyHeaderRegex.test(text) && cppHeaderRegex.test(text)) {
+          // Ensure headers on the same line are split onto separate lines
+          let normalized = text
+            .replace(new RegExp(`(${pyHeaderRegex.source})[ \\t|:;-]*(${cppHeaderRegex.source})`, "i"), "$1\n$2")
+            .replace(new RegExp(`(${pyHeaderRegex.source})`, "i"), "\n$1\n")
+            .replace(new RegExp(`(${cppHeaderRegex.source})`, "i"), "\n$1\n");
+
+          const lines = normalized.split(/\r?\n/).map((l) => l.trimEnd()).filter((l) => l.trim().length > 0);
+          const pyIdx = lines.findIndex((l) => pyHeaderRegex.test(l.trim()));
+          const cppIdx = lines.findIndex((l) => cppHeaderRegex.test(l.trim()));
+
+          if (pyIdx !== -1 && cppIdx !== -1 && pyIdx !== cppIdx) {
+            const firstHeaderIdx = Math.min(pyIdx, cppIdx);
+            const introLines = lines.slice(0, firstHeaderIdx);
+
+            // Identify trailing non-code Vietnamese prompt lines (e.g. "Kết quả in ra là:")
+            let outroStartIdx = lines.length;
+            const vnAccentRegex = /[àáạảãâầấậẩẫăằắặẳẵèéẹẻẽêềếệểễìíịỉĩòóọỏõôồốộổỗơờớợởỡùúụủũưừứựửữỳýỵỷỹđ]/i;
+            while (outroStartIdx > Math.max(pyIdx, cppIdx) + 1) {
+              const candidate = lines[outroStartIdx - 1].trim();
+              if (
+                vnAccentRegex.test(candidate) &&
+                !/\b(print|cout|cin|input|range|for|while|if|int|return)\b/.test(candidate) &&
+                !candidate.endsWith(";") &&
+                !candidate.endsWith("{") &&
+                !candidate.endsWith("}")
+              ) {
+                outroStartIdx--;
+              } else {
+                break;
+              }
+            }
+
+            const outroLines = lines.slice(outroStartIdx);
+            let pyCodeLines = [];
+            let cppCodeLines = [];
+
+            if (cppIdx > pyIdx + 1) {
+              // Pattern A: Python header -> Python code -> C++ header -> C++ code
+              pyCodeLines = lines.slice(pyIdx + 1, cppIdx);
+              cppCodeLines = lines.slice(cppIdx + 1, outroStartIdx);
+            } else if (cppIdx === pyIdx + 1) {
+              // Pattern B: Both headers at top -> Python code -> C++ code
+              const bodyLines = lines.slice(cppIdx + 1, outroStartIdx);
+              const cppStartOffset = bodyLines.findIndex((l) =>
+                /^(?:#include|using\s+namespace|(?:int|long|float|double|char|string|bool|void)\s+[a-zA-Z_])/.test(l.trim())
+              );
+              if (cppStartOffset > 0) {
+                pyCodeLines = bodyLines.slice(0, cppStartOffset);
+                cppCodeLines = bodyLines.slice(cppStartOffset);
+              } else {
+                const half = Math.ceil(bodyLines.length / 2);
+                pyCodeLines = bodyLines.slice(0, half);
+                cppCodeLines = bodyLines.slice(half);
+              }
+            }
+
+            if (pyCodeLines.length > 0 && cppCodeLines.length > 0) {
+              const [formattedPy, formattedCpp] = autoIndentCodePair(
+                pyCodeLines.join("\n"),
+                cppCodeLines.join("\n")
+              );
+              const tableRows = [
+                [lines[pyIdx].trim(), lines[cppIdx].trim()],
+                [formattedPy, formattedCpp]
+              ];
+              const parts = [];
+              if (introLines.length > 0) parts.push(introLines.join("\n"));
+              parts.push(`[[TABLE]]${JSON.stringify(tableRows)}[[/TABLE]]`);
+              if (outroLines.length > 0) parts.push(outroLines.join("\n"));
+              return parts.join("\n");
+            }
+          }
+        }
+
+        return text;
+      }
+
+      function formatQuestionContent(rawText) {
+        if (rawText === null || rawText === undefined) return "";
+        const normalized = normalizeQuestionTables(rawText);
+        const tokenRegex = /\[\[TABLE\]\]([\s\S]*?)\[\[\/TABLE\]\]/g;
+        let resultHtml = "";
+        let lastIndex = 0;
+        let match;
+
+        while ((match = tokenRegex.exec(normalized)) !== null) {
+          const beforeText = normalized.slice(lastIndex, match.index).replace(/\n+$/, "");
+          if (beforeText) {
+            resultHtml += escapeHtml(beforeText);
+          }
+          try {
+            const rows = JSON.parse(match[1]);
+            resultHtml += renderTableFromRows(rows);
+          } catch (e) {
+            resultHtml += escapeHtml(match[1]);
+          }
+          lastIndex = tokenRegex.lastIndex;
+        }
+
+        const remaining = normalized.slice(lastIndex).replace(/^\n+/, lastIndex > 0 ? "" : "$&");
+        if (remaining) {
+          resultHtml += escapeHtml(remaining);
+        }
+        return resultHtml;
+      }
+      window.formatQuestionContent = formatQuestionContent;
+
       function showAlert(message, callback = null) {
         const container = document.getElementById("modal-container");
         window._currentAlertCallback = callback;
@@ -1067,6 +1591,12 @@
       }
 
       async function parseExamWithGemini(html, examType) {
+        const { processedHtml, extractedTables } = preprocessTablesInHtml(html);
+        const tableRefNotes = extractedTables.length > 0
+          ? "\n\nDỮ LIỆU THAM KHẢO CỦA CÁC BẢNG (Chỉ dùng để tham khảo giải đáp án nếu đáp án chưa gạch chân; trong trường 'question' BẮT BUỘC chỉ ghi ký hiệu [[TABLE_0]], [[TABLE_1]]... chứ KHÔNG chép lại nội dung bảng):\n" +
+            extractedTables.map((t) => `${t.token}: ${JSON.stringify(t.rows)}`).join("\n")
+          : "";
+
         const prompt = `Bạn là một chuyên gia giáo dục và chuyên gia trích xuất dữ liệu. Hãy phân tích nội dung HTML trích xuất từ file DOCX đề thi và chuyển đổi nó thành định dạng JSON chính xác.
 
 Đề thi có 3 phần chính:
@@ -1084,7 +1614,8 @@ YÊU CẦU CỰC KỲ QUAN TRỌNG:
 2. Nhận diện đáp án đúng: Đáp án thường được gạch chân (<u>), in đậm (<strong>), tô màu đỏ, hoặc có ký hiệu đặc biệt. Ưu tiên gạch chân cho Phần II.
 3. Nếu không thấy đáp án được đánh dấu, hãy sử dụng kiến thức chuyên môn để giải và đưa ra đáp án chính xác nhất.
 4. Đối với Phần II: Đảm bảo trích xuất đầy đủ tất cả các ý nhỏ (a, b, c, d) cho mỗi câu hỏi lớn. PHẢI trích xuất đủ cả 7 câu của Phần II theo đúng thứ tự xuất hiện (1, 2, 3, 4, 5, 6, 7).
-5. Giữ nguyên định dạng văn bản quan trọng, công thức, thẻ HTML hoặc mã nguồn (code) trong nội dung câu hỏi.
+5. Giữ nguyên định dạng bảng, văn bản quan trọng, công thức, thẻ HTML hoặc mã nguồn (code) trong nội dung câu hỏi:
+   - QUY TẮC BẢNG: Nếu trong nội dung câu hỏi có ký hiệu đánh dấu bảng dạng [[TABLE_0]], [[TABLE_1]]..., bạn BẮT BUỘC phải giữ nguyên chính xác ký hiệu [[TABLE_0]], [[TABLE_1]]... tại đúng vị trí xuất hiện trong trường "question" (ví dụ: "Câu 25. Chọn một trong hai ngôn ngữ...\n[[TABLE_0]]\nKết quả in ra là:"). TUYỆT ĐỐI KHÔNG xóa ký hiệu [[TABLE_...]] và KHÔNG tự ý gộp nội dung bảng thành văn bản phẳng.
    - Nếu trong câu hỏi hoặc các phương án có chứa thẻ HTML (ví dụ: <style>, <link>, <head>, <script>, <div>...) hoặc toán tử so sánh (<, >), HÃY GIỮ NGUYÊN dưới dạng chuỗi văn bản thuần túy (không tự ý xóa thẻ hay cắt bớt).
    - PHẢI sử dụng ký tự xuống dòng (\n) để tách biệt các dòng code. TUYỆT ĐỐI KHÔNG được gộp các dòng code lại với nhau thành một dòng.
    - PHẢI giữ nguyên các khoảng trắng thụt lề (indentation) ở đầu dòng để code (như Python) có cấu trúc đúng.
@@ -1096,13 +1627,13 @@ YÊU CẦU CỰC KỲ QUAN TRỌNG:
 10. Trích xuất CHÍNH XÁC "Giải thích chi tiết" hoặc "Giải thích" nếu có trong đề thi và lưu vào thuộc tính "explanation" (nếu không có thì để rỗng hoặc null, tuyệt đối không tự bịa ra giải thích nếu đề bài không có).
 
 Nội dung HTML cần phân tích:
-${html}`;
+${processedHtml}${tableRefNotes}`;
 
         try {
           if (!ai) {
             console.warn("AI is not initialized (missing API Key). Falling back to manual parser.");
             showAlert("Chưa cấu hình API Key trên Vercel. Đang sử dụng bộ phân tích cơ bản (có thể không chính xác bằng AI).");
-            return parseExamHTML(html);
+            return restoreTablesInExamData(parseExamHTML(processedHtml), extractedTables);
           }
 
           const response = await ai.models.generateContent({
@@ -1183,12 +1714,12 @@ ${html}`;
           parsedData.part2.forEach((q, idx) => { q.id = idx + 1; });
           parsedData.part3.forEach((q, idx) => { q.id = idx + 1; });
           
-          return parsedData;
+          return restoreTablesInExamData(parsedData, extractedTables);
         } catch (error) {
           console.error("Gemini Error:", error);
           showAlert("Lỗi khi dùng AI phân tích đề thi: " + error.message + "\n\nĐang chuyển sang chế độ phân tích cơ bản (có thể không chính xác).");
           // Fallback to manual parser if Gemini fails
-          return parseExamHTML(html);
+          return restoreTablesInExamData(parseExamHTML(processedHtml), extractedTables);
         }
       }
 
@@ -1723,7 +2254,7 @@ ${html}`;
         let blockHtml = `
           <div class="question-block bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
               <div class="p-6 border-b border-gray-100 bg-gray-50">
-                  <div class="text-gray-800 text-base whitespace-pre-wrap font-semibold leading-relaxed"><span class="font-bold text-blue-600 mr-1">Câu ${qId}:</span> ${escapeHtml(cleanQuestion)}</div>
+                  <div class="text-gray-800 text-base whitespace-pre-wrap font-semibold leading-relaxed"><span class="font-bold text-blue-600 mr-1">Câu ${qId}:</span> ${formatQuestionContent(cleanQuestion)}</div>
               </div>
               <div class="p-2 sm:p-6">
         `;
@@ -1749,7 +2280,7 @@ ${html}`;
                           <div class="px-3 sm:px-4 py-1.5 rounded-lg border border-gray-200 text-sm font-medium text-gray-600 peer-checked:bg-[#283553] peer-checked:text-white peer-checked:border-[#283553] transition-colors bg-white hover:bg-gray-50">Sai</div>
                       </label>
                   </div>
-                  <div class="text-gray-800 text-sm leading-relaxed pt-1.5 whitespace-pre-wrap">${escapeHtml(sqText)}</div>
+                  <div class="text-gray-800 text-sm leading-relaxed pt-1.5 whitespace-pre-wrap">${formatQuestionContent(sqText)}</div>
               </div>
           `;
         });
@@ -1827,7 +2358,7 @@ ${html}`;
             const options = Array.isArray(q.options) ? q.options : [];
             html += `
                       <div class="question-block bg-white p-6 rounded-xl border border-gray-200 shadow-sm">
-                          <div class="text-gray-800 mb-6 whitespace-pre-wrap text-base leading-relaxed font-medium"><span class="font-bold text-blue-600 mr-1">Câu ${qId}:</span> ${escapeHtml(cleanQuestion)}</div>
+                          <div class="text-gray-800 mb-6 whitespace-pre-wrap text-base leading-relaxed font-medium"><span class="font-bold text-blue-600 mr-1">Câu ${qId}:</span> ${formatQuestionContent(cleanQuestion)}</div>
                           <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
                   `;
             options.forEach((opt, optIndex) => {
@@ -1965,7 +2496,7 @@ ${html}`;
             const val = (state.answers.part3 && state.answers.part3[qId]) || "";
             html += `
                       <div class="question-block bg-white p-6 rounded-xl border border-gray-200 shadow-sm">
-                          <div class="text-gray-800 mb-6 whitespace-pre-wrap text-base leading-relaxed font-medium"><span class="font-bold text-blue-600 mr-1">Câu ${qId}:</span> ${escapeHtml(cleanQuestion)}</div>
+                          <div class="text-gray-800 mb-6 whitespace-pre-wrap text-base leading-relaxed font-medium"><span class="font-bold text-blue-600 mr-1">Câu ${qId}:</span> ${formatQuestionContent(cleanQuestion)}</div>
                           <div class="flex items-center bg-gray-50 p-4 rounded-lg border border-gray-100">
                               <span class="text-gray-600 font-bold mr-3 shrink-0">Đáp án:</span>
                               <input type="text" value="${escapeHtml(val)}" oninput="saveAnswer('part3', ${qId}, this.value)" class="w-full px-4 py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition font-medium text-gray-800 bg-white" placeholder="Nhập câu trả lời...">
@@ -2022,7 +2553,7 @@ ${html}`;
               : "";
             let correctAnsText = `${String.fromCharCode(65 + q.answer)}. ${escapeHtml(optAnswer)}`;
             if (q.explanation) {
-               correctAnsText += `<br><span class="text-gray-500 italic text-xs mt-1 block font-normal">Giải thích: ${escapeHtml(q.explanation)}</span>`;
+               correctAnsText += `<br><span class="text-gray-500 italic text-xs mt-1 block font-normal">Giải thích: ${formatQuestionContent(q.explanation)}</span>`;
             }
             let userAnsText = "Chưa trả lời";
             if (state.answers.part1 && state.answers.part1[q.id] !== undefined && q.options && q.options[state.answers.part1[q.id]] !== undefined) {
@@ -2031,7 +2562,7 @@ ${html}`;
             }
             wrongAnswers.push({
               part: "Phần I",
-              question: `Câu ${q.id}: ${escapeHtml(cleanQ)}`,
+              question: `Câu ${q.id}: ${formatQuestionContent(cleanQ)}`,
               userAnswer: userAnsText,
               correctAnswer: correctAnsText,
             });
@@ -2060,12 +2591,12 @@ ${html}`;
               let correctAnsText = sq.answer ? "Đúng" : "Sai";
               let explanation = sq.explanation || q.explanation;
               if (explanation) {
-                 correctAnsText += `<br><span class="text-gray-500 italic text-xs mt-1 block font-normal">Giải thích: ${escapeHtml(explanation)}</span>`;
+                 correctAnsText += `<br><span class="text-gray-500 italic text-xs mt-1 block font-normal">Giải thích: ${formatQuestionContent(explanation)}</span>`;
               }
               const cleanSqText = sq.text ? String(sq.text).replace(/^[a-e][.:)\/]\s*/i, "") : "";
               wrongAnswers.push({
                 part: partLabel,
-                question: `Câu ${q.id} - Ý ${sq.id}: ${escapeHtml(cleanSqText)}`,
+                question: `Câu ${q.id} - Ý ${escapeHtml(sq.id)}: ${formatQuestionContent(cleanSqText)}`,
                 userAnswer:
                   userAns !== undefined
                     ? userAns
@@ -2105,12 +2636,12 @@ ${html}`;
             } else {
               let correctAnsText = escapeHtml(q.answer);
               if (q.explanation) {
-                 correctAnsText += `<br><span class="text-gray-500 italic text-xs mt-1 block font-normal">Giải thích: ${escapeHtml(q.explanation)}</span>`;
+                 correctAnsText += `<br><span class="text-gray-500 italic text-xs mt-1 block font-normal">Giải thích: ${formatQuestionContent(q.explanation)}</span>`;
               }
               const cleanQ = q.question ? q.question.replace(/^(Câu|Bài)\s*\d+[\s.:\-]+/i, "") : "";
               wrongAnswers.push({
                 part: "Phần III",
-                question: `Câu ${q.id}: ${escapeHtml(cleanQ)}`,
+                question: `Câu ${q.id}: ${formatQuestionContent(cleanQ)}`,
                 userAnswer: escapeHtml((state.answers.part3 && state.answers.part3[q.id]) || "Chưa trả lời"),
                 correctAnswer: correctAnsText,
               });
