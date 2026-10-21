@@ -228,7 +228,7 @@
           }
         }
 
-        let tableHtml = `<div class="my-3 overflow-x-auto"><table class="w-full border-collapse border border-gray-800 bg-white text-gray-900">`;
+        let tableHtml = `<div class="my-3 max-w-full overflow-x-auto"><table class="w-full border-collapse border border-gray-800 bg-white text-gray-900">`;
         clonedRows.forEach((row, rIdx) => {
           if (!Array.isArray(row)) return;
           tableHtml += `<tr>`;
@@ -2751,13 +2751,13 @@ ${processedHtml}${tableRefNotes}`;
                                 Chi tiết các câu làm sai
                             </h2>
                             <div class="overflow-hidden rounded-xl border border-gray-200">
-                                <table class="w-full text-left border-collapse">
+                                <table class="w-full table-fixed text-left border-collapse">
                                     <thead>
                                         <tr class="bg-gray-50 border-b border-gray-200">
-                                            <th class="py-3 px-4 font-semibold text-gray-600 text-sm">Phần</th>
-                                            <th class="py-3 px-4 font-semibold text-gray-600 text-sm">Câu hỏi</th>
-                                            <th class="py-3 px-4 font-semibold text-red-600 text-sm">Bạn chọn</th>
-                                            <th class="py-3 px-4 font-semibold text-green-600 text-sm">Đáp án đúng</th>
+                                            <th class="w-[11%] py-3 px-4 font-semibold text-gray-600 text-sm">Phần</th>
+                                            <th class="w-[42%] py-3 px-4 font-semibold text-gray-600 text-sm">Câu hỏi</th>
+                                            <th class="w-[16%] py-3 px-4 font-semibold text-red-600 text-sm">Bạn chọn</th>
+                                            <th class="w-[31%] py-3 px-4 font-semibold text-green-600 text-sm">Đáp án đúng</th>
                                         </tr>
                                     </thead>
                                     <tbody class="divide-y divide-gray-100">
@@ -2765,10 +2765,10 @@ ${processedHtml}${tableRefNotes}`;
           wrongAnswers.forEach((wa) => {
             html += `
                                         <tr class="hover:bg-gray-50 transition">
-                                            <td class="py-3 px-4 text-gray-500 text-sm font-medium">${wa.part}</td>
-                                            <td class="py-3 px-4 text-gray-800 font-medium text-sm whitespace-pre-wrap">${wa.question}</td>
-                                            <td class="py-3 px-4 text-red-500 font-medium text-sm line-through">${wa.userAnswer}</td>
-                                            <td class="py-3 px-4 text-green-600 font-bold text-sm">${wa.correctAnswer}</td>
+                                            <td class="py-3 px-4 text-gray-500 text-sm font-medium break-words">${wa.part}</td>
+                                            <td class="py-3 px-4 text-gray-800 font-medium text-sm break-words overflow-x-auto"><div class="whitespace-pre-wrap break-words">${wa.question}</div></td>
+                                            <td class="py-3 px-4 text-red-500 font-medium text-sm line-through break-words">${wa.userAnswer}</td>
+                                            <td class="py-3 px-4 text-green-600 font-bold text-sm break-words">${wa.correctAnswer}</td>
                                         </tr>
                     `;
           });
