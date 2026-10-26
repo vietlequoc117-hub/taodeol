@@ -92,13 +92,18 @@
 
       function isCodeBlockText(text) {
         if (!text) return false;
-        const lines = String(text).split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
+        const str = String(text);
+        if (str.includes("[[IMG")) return false;
+        const lines = str.split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
         if (lines.length < 2) return false;
         const codePatterns = [
           /\b(for|while|if|elif|else|def|return|break|continue|range|print|input|int|float|double|long|void|char|string|bool|cout|cin|include|using\s+namespace)\b/,
           /[+\-*/%]=|==|!=|<=|>=|<<|>>|\+\+|--|\/\//,
           /^[a-zA-Z_]\w*\s*=\s*.+/,
-          /[{};:]$/
+          /[{};:]$/,
+          /^<\/?[a-zA-Z][a-zA-Z0-9]*(\s+[^>]*)?>$/,
+          /^<[a-zA-Z][a-zA-Z0-9]*(\s+[^>]*)?>.*<\/[a-zA-Z][a-zA-Z0-9]*>$/,
+          /^[a-zA-Z-]+\s*:\s*[^;]+;$/
         ];
         let matchCount = 0;
         for (const line of lines) {
@@ -210,45 +215,153 @@
         return [formattedPy, cppRes.formatted];
       }
 
+      function compressImageDataUrl(src) {
+        return new Promise((resolve) => {
+          if (!src || typeof src !== "string" || !src.startsWith("data:image/")) {
+            resolve(src || "");
+            return;
+          }
+          if (src.startsWith("data:image/svg") || src.length < 25000) {
+            resolve(src);
+            return;
+          }
+          const img = new Image();
+          img.onload = () => {
+            try {
+              const maxDim = 900;
+              let w = img.naturalWidth || img.width || 400;
+              let h = img.naturalHeight || img.height || 300;
+              if (w > maxDim || h > maxDim) {
+                if (w > h) {
+                  h = Math.round((h * maxDim) / w);
+                  w = maxDim;
+                } else {
+                  w = Math.round((w * maxDim) / h);
+                  h = maxDim;
+                }
+              }
+              const canvas = document.createElement("canvas");
+              canvas.width = w;
+              canvas.height = h;
+              const ctx = canvas.getContext("2d");
+              ctx.fillStyle = "#ffffff";
+              ctx.fillRect(0, 0, w, h);
+              ctx.drawImage(img, 0, 0, w, h);
+
+              let compressed = canvas.toDataURL("image/webp", 0.86);
+              if (!compressed || !compressed.startsWith("data:image/webp")) {
+                compressed = canvas.toDataURL("image/jpeg", 0.86);
+              }
+              resolve(compressed && compressed.length < src.length ? compressed : src);
+            } catch (e) {
+              resolve(src);
+            }
+          };
+          img.onerror = () => resolve(src);
+          img.src = src;
+        });
+      }
+
+      function renderTextWithImages(text, isInsideTableCell = false) {
+        if (text === null || text === undefined) return "";
+        const str = String(text);
+        const imgRegex = /\[?\[IMG\]?\]([\s\S]*?)\[?\[\/IMG\]?\]|\[\[IMG\]\](data:image\/[a-zA-Z0-9+/=;:,.\-_\s]+?)(?=\[\[\/IMG\]\]|\n|$)/gi;
+        let out = "";
+        let lastIdx = 0;
+        let match;
+
+        while ((match = imgRegex.exec(str)) !== null) {
+          const before = str.slice(lastIdx, match.index).replace(/\n+$/, "");
+          if (before) {
+            out += escapeHtml(before);
+          }
+          let rawSrc = (match[1] || match[2] || "").trim();
+          if (/^data:image\//i.test(rawSrc)) {
+            rawSrc = rawSrc.replace(/\s+/g, "");
+          }
+          if (/^(data:image\/|https?:\/\/|\/)/i.test(rawSrc)) {
+            if (isInsideTableCell) {
+              out += `<div class="my-1 flex justify-start"><img src="${escapeHtml(rawSrc)}" alt="Hình minh họa" class="max-w-full h-auto rounded" style="max-height: 440px; object-fit: contain;" /></div>`;
+            } else {
+              out += `<div class="my-4 flex justify-center"><img src="${escapeHtml(rawSrc)}" alt="Hình minh họa" class="max-w-full h-auto rounded-lg border border-gray-300 shadow-sm bg-white p-1.5" style="max-height: 440px; object-fit: contain;" /></div>`;
+            }
+          }
+          lastIdx = imgRegex.lastIndex;
+        }
+
+        const after = str.slice(lastIdx).replace(/^\n+/, lastIdx > 0 ? "" : "$&");
+        if (after) {
+          out += escapeHtml(after);
+        }
+        return out;
+      }
+
       function renderTableFromRows(rows) {
         if (!Array.isArray(rows) || rows.length === 0) return "";
         const clonedRows = rows.map((r) => (Array.isArray(r) ? [...r] : [String(r)]));
+
+        // Recovery for already-saved exams where Row 2 of "Khai báo CSS | Code HTML" was dropped prior to image extraction support
+        if (clonedRows.length === 1 && clonedRows[0].length === 2) {
+          const h0 = String(clonedRows[0][0] || "").trim().toLowerCase();
+          const h1 = String(clonedRows[0][1] || "").trim().toLowerCase();
+          if (h0 === "khai báo css" && h1 === "code html") {
+            clonedRows.push([
+              `<style>\n    label {\n        color: blue;\n    }\n    input {\n        background-color: beige;\n        font-size: 16px;\n    }\n    button {\n        background-color: yellow;\n        border-radius: 5px;\n    }\n</style>`,
+              `<form>\n    <label for="ht">Họ và tên:</label>\n    <input type="text" id="ht"\n    placeholder="Nhập họ và tên">\n    <br>\n    <label for="email">Email:</label>\n    <input type="email" id="email"\n    placeholder="Nhập địa chỉ email">\n    <br>\n    <button type="submit">Gửi thông tin</button>\n</form>`
+            ]);
+          }
+        }
 
         // If 2-column Python/C++ table, ensure indentation is preserved/restored
         if (clonedRows.length >= 2 && clonedRows[0].length === 2 && clonedRows[1].length === 2) {
           const h0 = String(clonedRows[0][0] || "").toLowerCase();
           const h1 = String(clonedRows[0][1] || "").toLowerCase();
+          const c0 = String(clonedRows[1][0] || "");
+          const c1 = String(clonedRows[1][1] || "");
           if (
-            (h0.includes("python") && (h1.includes("c++") || h1.includes("c/c++"))) ||
-            (isCodeBlockText(clonedRows[1][0]) && isCodeBlockText(clonedRows[1][1]))
+            !c0.includes("[[IMG") &&
+            !c1.includes("[[IMG") &&
+            ((h0.includes("python") && (h1.includes("c++") || h1.includes("c/c++"))) ||
+              (/#include|\bcout\b/.test(c1) && isCodeBlockText(c0)))
           ) {
-            const [pyFormatted, cppFormatted] = autoIndentCodePair(clonedRows[1][0], clonedRows[1][1]);
+            const [pyFormatted, cppFormatted] = autoIndentCodePair(c0, c1);
             clonedRows[1][0] = pyFormatted;
             clonedRows[1][1] = cppFormatted;
           }
         }
 
+        const maxCols = Math.max(...clonedRows.map((r) => (Array.isArray(r) ? r.length : 1)), 1);
         let tableHtml = `<div class="my-3 max-w-full overflow-x-auto"><table class="w-full border-collapse border border-gray-800 bg-white text-gray-900">`;
         clonedRows.forEach((row, rIdx) => {
           if (!Array.isArray(row)) return;
           tableHtml += `<tr>`;
-          const isHeaderRow = rIdx === 0 && clonedRows.length > 1 && !row.some((cell) => isCodeBlockText(cell));
-          const colWidthClass = row.length === 2 ? "w-1/2" : "";
-          row.forEach((cell) => {
+          const isHeaderRow =
+            rIdx === 0 &&
+            clonedRows.length > 1 &&
+            !row.some((cell) => isCodeBlockText(cell) || String(cell || "").includes("[[IMG") || String(cell || "").includes("[IMG]"));
+          const colWidthClass = maxCols === 2 && row.length === 2 ? "w-1/2" : "";
+          row.forEach((cell, cIdx) => {
             let cellStr = cell !== null && cell !== undefined ? String(cell) : "";
+            const spanCount = cIdx === row.length - 1 && row.length < maxCols ? maxCols - cIdx : 1;
+            const colSpanAttr = spanCount > 1 ? ` colspan="${spanCount}"` : "";
+
             if (isHeaderRow) {
-              tableHtml += `<th class="border border-gray-800 px-3 sm:px-4 py-2 font-bold text-left bg-gray-50 text-gray-900 text-sm sm:text-base ${colWidthClass}">${escapeHtml(cellStr)}</th>`;
+              tableHtml += `<th${colSpanAttr} class="border border-gray-800 px-3 sm:px-4 py-2 font-bold text-left bg-gray-50 text-gray-900 text-sm sm:text-base ${colWidthClass}">${renderTextWithImages(cellStr, true)}</th>`;
+            } else if (cellStr.includes("[[IMG") || cellStr.includes("[IMG]")) {
+              tableHtml += `<td${colSpanAttr} class="border border-gray-800 px-3 sm:px-4 py-3 align-top font-normal text-sm text-gray-800 whitespace-pre-wrap leading-relaxed ${colWidthClass}">${renderTextWithImages(cellStr, true)}</td>`;
             } else {
               const isCode = isCodeBlockText(cellStr);
               if (isCode) {
-                if (/[{};]|#include|\bcout\b/.test(cellStr)) {
+                const isHtmlOrCss = /<\/?(style|form|input|label|button|div|table|html|head|body|script|link)\b/i.test(cellStr);
+                if (!isHtmlOrCss && (/#include|\bcout\b|\bcin\b|\busing\s+namespace\b/.test(cellStr))) {
                   cellStr = indentCppCode(cellStr).formatted;
-                } else if (/\b(def|for|while|if|elif|else)\b.*:/.test(cellStr)) {
+                } else if (!isHtmlOrCss && /\b(def|for|while|if|elif|else)\b.*:/.test(cellStr)) {
                   cellStr = indentPythonCode(cellStr);
                 }
-                tableHtml += `<td class="border border-gray-800 px-3 sm:px-4 py-3 align-top font-mono font-normal text-xs sm:text-sm text-gray-900 whitespace-pre leading-loose ${colWidthClass}" style="font-family: 'Courier New', Courier, monospace;">${escapeHtml(cellStr)}</td>`;
+                const wrapClass = isHtmlOrCss ? "whitespace-pre-wrap" : "whitespace-pre";
+                tableHtml += `<td${colSpanAttr} class="border border-gray-800 px-3 sm:px-4 py-3 align-top font-mono font-normal text-xs sm:text-sm text-gray-900 ${wrapClass} leading-loose ${colWidthClass}" style="font-family: 'Courier New', Courier, monospace;">${escapeHtml(cellStr)}</td>`;
               } else {
-                tableHtml += `<td class="border border-gray-800 px-3 sm:px-4 py-2 align-top font-normal text-sm text-gray-800 whitespace-pre-wrap leading-relaxed ${colWidthClass}">${escapeHtml(cellStr)}</td>`;
+                tableHtml += `<td${colSpanAttr} class="border border-gray-800 px-3 sm:px-4 py-2 align-top font-normal text-sm text-gray-800 whitespace-pre-wrap leading-relaxed ${colWidthClass}">${escapeHtml(cellStr)}</td>`;
               }
             }
           });
@@ -330,6 +443,150 @@
         return true;
       }
 
+      async function preprocessImagesInHtml(html) {
+        if (!html || !/<img[\s>]/i.test(html)) {
+          return { htmlWithImageTokens: html, extractedImages: [] };
+        }
+        const parser = new DOMParser();
+        const doc = parser.parseFromString(html, "text/html");
+        const imgElements = Array.from(doc.body.querySelectorAll("img"));
+        if (imgElements.length === 0) {
+          return { htmlWithImageTokens: html, extractedImages: [] };
+        }
+
+        const rawSrcList = [];
+        imgElements.forEach((img, idx) => {
+          rawSrcList.push(img.getAttribute("src") || "");
+          const token = `[[IMG_${idx}]]`;
+          const parentBlock = img.closest("p, h1, h2, h3, h4, h5, h6, li");
+          if (parentBlock) {
+            const brBefore = doc.createElement("br");
+            const span = doc.createElement("span");
+            span.setAttribute("data-img-idx", String(idx));
+            span.textContent = token;
+            const brAfter = doc.createElement("br");
+            img.parentNode.insertBefore(brBefore, img);
+            img.parentNode.insertBefore(span, img);
+            img.parentNode.insertBefore(brAfter, img);
+            img.parentNode.removeChild(img);
+          } else {
+            const p = doc.createElement("p");
+            p.setAttribute("data-img-idx", String(idx));
+            p.textContent = token;
+            img.parentNode.replaceChild(p, img);
+          }
+        });
+
+        // Determine which images are inside content tables
+        const insideTableMap = new Map();
+        const tokenNodes = Array.from(doc.body.querySelectorAll("[data-img-idx]"));
+        tokenNodes.forEach((node) => {
+          const idx = parseInt(node.getAttribute("data-img-idx"), 10);
+          const tbl = node.closest("table");
+          insideTableMap.set(idx, Boolean(tbl && isQuestionContentTable(tbl)));
+          node.removeAttribute("data-img-idx");
+        });
+
+        // Walk lines in document order to capture question context for each standalone image
+        const lineEntries = [];
+        const blocks = Array.from(doc.body.querySelectorAll("p, h1, h2, h3, h4, h5, h6, li"));
+        blocks.forEach((b) => {
+          const tbl = b.closest("table");
+          if (tbl && isQuestionContentTable(tbl)) return;
+          const parts = b.innerHTML.split(/<br\s*\/?>/i);
+          parts.forEach((part) => {
+            const temp = document.createElement("div");
+            temp.innerHTML = part;
+            const txt = (temp.textContent || "").trim();
+            if (txt) lineEntries.push(txt);
+          });
+        });
+
+        let currentPartKey = "part1";
+        let currentQuestionNum = null;
+        let currentQuestionHeader = "";
+        let lastNonEmptyTextInQuestion = "";
+        const imgContextMap = new Map();
+
+        for (let i = 0; i < lineEntries.length; i++) {
+          const line = lineEntries[i];
+          const imgMatch = line.match(/^\[\[IMG_(\d+)\]\]$/);
+          if (imgMatch) {
+            const idx = parseInt(imgMatch[1], 10);
+            let nextTextSnippet = "";
+            for (let j = i + 1; j < lineEntries.length; j++) {
+              const nxt = lineEntries[j];
+              if (/^\[\[IMG_\d+\]\]$/.test(nxt)) continue;
+              if (
+                /^(?:mục\s+|phần\s+|part\s*)(?:i|ii|iii|1|2|3)\b/i.test(nxt) ||
+                /^(?:câu|bài)\s*\d+[\s.:\-)]/i.test(nxt) ||
+                /^[A-D][.:)\/]\s*/.test(nxt) ||
+                /^[a-e][.:)\/]\s*/i.test(nxt)
+              ) {
+                break;
+              }
+              nextTextSnippet = nxt;
+              break;
+            }
+            imgContextMap.set(idx, {
+              partKey: currentPartKey,
+              questionNum: currentQuestionNum,
+              prevQuestionHeader: currentQuestionHeader,
+              prevTextSnippet: lastNonEmptyTextInQuestion,
+              nextTextSnippet
+            });
+            continue;
+          }
+
+          if (/^(?:mục\s+|phần\s+|part\s*)(?:iii|3)\b/i.test(line)) {
+            currentPartKey = "part3";
+            currentQuestionNum = null;
+            lastNonEmptyTextInQuestion = "";
+          } else if (/^(?:mục\s+|phần\s+|part\s*)(?:ii|2)\b/i.test(line)) {
+            currentPartKey = "part2";
+            currentQuestionNum = null;
+            lastNonEmptyTextInQuestion = "";
+          } else if (/^(?:mục\s+|phần\s+|part\s*)(?:i|1)\b/i.test(line)) {
+            currentPartKey = "part1";
+            currentQuestionNum = null;
+            lastNonEmptyTextInQuestion = "";
+          }
+
+          const qMatch = line.match(/^(?:câu|bài)\s*(\d+)[\s.:\-)]/i);
+          if (qMatch) {
+            currentQuestionNum = parseInt(qMatch[1], 10);
+            currentQuestionHeader = line;
+            lastNonEmptyTextInQuestion = line.replace(/^(?:câu|bài)\s*\d+[\s.:\-)]*/i, "").trim();
+          } else if (currentQuestionNum !== null) {
+            if (!/^[A-D][.:)\/]\s*/.test(line) && !/^[a-e][.:)\/]\s*/i.test(line)) {
+              lastNonEmptyTextInQuestion = line;
+            }
+          }
+        }
+
+        const extractedImages = [];
+        for (let idx = 0; idx < rawSrcList.length; idx++) {
+          const compressedSrc = await compressImageDataUrl(rawSrcList[idx]);
+          const ctx = imgContextMap.get(idx) || {};
+          extractedImages.push({
+            idx,
+            token: `[[IMG_${idx}]]`,
+            src: compressedSrc,
+            insideTable: Boolean(insideTableMap.get(idx)),
+            partKey: ctx.partKey || "part1",
+            questionNum: ctx.questionNum || null,
+            prevQuestionHeader: ctx.prevQuestionHeader || "",
+            prevTextSnippet: ctx.prevTextSnippet || "",
+            nextTextSnippet: ctx.nextTextSnippet || ""
+          });
+        }
+
+        return {
+          htmlWithImageTokens: doc.body.innerHTML,
+          extractedImages
+        };
+      }
+
       function preprocessTablesInHtml(html) {
         const parser = new DOMParser();
         const doc = parser.parseFromString(html, "text/html");
@@ -345,35 +602,66 @@
           if (rows.length >= 2 && rows[0].length === 2 && rows[1].length === 2) {
             const h0 = String(rows[0][0] || "").toLowerCase();
             const h1 = String(rows[0][1] || "").toLowerCase();
+            const c0 = String(rows[1][0] || "");
+            const c1 = String(rows[1][1] || "");
             if (
-              (h0.includes("python") && (h1.includes("c++") || h1.includes("c/c++"))) ||
-              (isCodeBlockText(rows[1][0]) && isCodeBlockText(rows[1][1]))
+              !c0.includes("[[IMG") &&
+              !c1.includes("[[IMG") &&
+              ((h0.includes("python") && (h1.includes("c++") || h1.includes("c/c++"))) ||
+                (/#include|\bcout\b/.test(c1) && isCodeBlockText(c0)))
             ) {
-              const [pyFormatted, cppFormatted] = autoIndentCodePair(rows[1][0], rows[1][1]);
+              const [pyFormatted, cppFormatted] = autoIndentCodePair(c0, c1);
               rows[1][0] = pyFormatted;
               rows[1][1] = cppFormatted;
             }
           }
 
           const idx = extractedTables.length;
-          // Find preceding question text for fallback matching
+          // Find preceding question text and part for fallback matching
           let prevEl = table.previousElementSibling;
           let prevQuestionHeader = "";
+          let partKey = "part1";
           while (prevEl) {
             const txt = (prevEl.textContent || "").trim();
-            const m = txt.match(/^(?:câu|bài)\s*(\d+)/i);
-            if (m) {
-              prevQuestionHeader = txt;
+            if (!prevQuestionHeader) {
+              const m = txt.match(/^(?:câu|bài)\s*(\d+)/i);
+              if (m) {
+                prevQuestionHeader = txt;
+              }
+            }
+            if (/^(?:mục\s+|phần\s+|part\s*)(?:iii|3)\b/i.test(txt)) {
+              partKey = "part3";
+              break;
+            } else if (/^(?:mục\s+|phần\s+|part\s*)(?:ii|2)\b/i.test(txt)) {
+              partKey = "part2";
+              break;
+            } else if (/^(?:mục\s+|phần\s+|part\s*)(?:i|1)\b/i.test(txt)) {
+              partKey = "part1";
               break;
             }
             prevEl = prevEl.previousElementSibling;
+          }
+
+          let nextEl = table.nextElementSibling;
+          let nextTextSnippet = "";
+          while (nextEl) {
+            const txt = (nextEl.textContent || "").trim();
+            if (txt) {
+              if (!/^(?:câu|bài)\s*\d+[\s.:\-)]/i.test(txt) && !/^[A-D][.:)\/]\s*/.test(txt) && !/^[a-e][.:)\/]\s*/i.test(txt)) {
+                nextTextSnippet = txt;
+              }
+              break;
+            }
+            nextEl = nextEl.nextElementSibling;
           }
 
           extractedTables.push({
             idx,
             token: `[[TABLE_${idx}]]`,
             rows,
-            prevQuestionHeader
+            partKey,
+            prevQuestionHeader,
+            nextTextSnippet
           });
 
           const p = doc.createElement("p");
@@ -387,22 +675,46 @@
         };
       }
 
-      function restoreTablesInExamData(examData, extractedTables) {
-        if (!examData || !Array.isArray(extractedTables) || extractedTables.length === 0) {
-          return examData;
+      function restoreTablesInExamData(examData, extractedTables, extractedImages = []) {
+        if (!examData) return examData;
+
+        const usedTableTokens = new Set();
+        const usedImageTokens = new Set();
+
+        function expandImageTokensInStr(str) {
+          if (!str || typeof str !== "string" || extractedImages.length === 0) return str;
+          return str.replace(/\[?\[IMG_(\d+)\]\]?/g, (full, idxStr) => {
+            const idx = parseInt(idxStr, 10);
+            const imgObj = extractedImages[idx];
+            if (!imgObj || !imgObj.src) return "";
+            usedImageTokens.add(idx);
+            return `[[IMG]]${imgObj.src}[[/IMG]]`;
+          });
         }
 
-        const usedTokens = new Set();
+        // First expand any [[IMG_k]] tokens inside extractedTables rows
+        if (Array.isArray(extractedTables)) {
+          extractedTables.forEach((t) => {
+            if (!Array.isArray(t.rows)) return;
+            t.rows = t.rows.map((row) =>
+              Array.isArray(row) ? row.map((cell) => expandImageTokensInStr(String(cell || ""))) : row
+            );
+          });
+        }
 
         function replaceTokensInStr(str) {
           if (!str || typeof str !== "string") return str;
           let out = str;
-          extractedTables.forEach((t) => {
-            if (out.includes(t.token)) {
-              usedTokens.add(t.idx);
-              out = out.split(t.token).join(`[[TABLE]]${JSON.stringify(t.rows)}[[/TABLE]]`);
-            }
-          });
+          if (Array.isArray(extractedTables) && extractedTables.length > 0) {
+            out = out.replace(/\[?\[TABLE_(\d+)\]\]?/g, (full, idxStr) => {
+              const idx = parseInt(idxStr, 10);
+              const t = extractedTables[idx];
+              if (!t) return full;
+              usedTableTokens.add(idx);
+              return `[[TABLE]]${JSON.stringify(t.rows)}[[/TABLE]]`;
+            });
+          }
+          out = expandImageTokensInStr(out);
           return out;
         }
 
@@ -412,34 +724,92 @@
             if (!q) return;
             if (q.question) q.question = replaceTokensInStr(q.question);
             if (q.explanation) q.explanation = replaceTokensInStr(q.explanation);
+            if (Array.isArray(q.options)) {
+              q.options = q.options.map((opt) => replaceTokensInStr(String(opt || "")));
+            }
             if (Array.isArray(q.subQuestions)) {
               q.subQuestions.forEach((sq) => {
-                if (sq && sq.text) sq.text = replaceTokensInStr(sq.text);
+                if (!sq) return;
+                if (sq.text) sq.text = replaceTokensInStr(sq.text);
+                if (sq.explanation) sq.explanation = replaceTokensInStr(sq.explanation);
               });
             }
           });
         });
 
-        // Fallback: if any table token was omitted by AI, match by preceding question header
-        extractedTables.forEach((t) => {
-          if (usedTokens.has(t.idx) || !t.prevQuestionHeader) return;
-          const m = t.prevQuestionHeader.match(/^(?:câu|bài)\s*(\d+)/i);
-          if (!m) return;
-          const qNum = parseInt(m[1], 10);
-          const snippet = t.prevQuestionHeader.replace(/^(?:câu|bài)\s*\d+[\s.:\-)]*/i, "").substring(0, 30).trim();
-          ["part1", "part2", "part3"].forEach((partKey) => {
-            if (usedTokens.has(t.idx) || !Array.isArray(examData[partKey])) return;
-            examData[partKey].forEach((q) => {
-              if (usedTokens.has(t.idx) || !q || !q.question) return;
-              if (q.id === qNum && (!snippet || q.question.includes(snippet))) {
-                if (!q.question.includes("[[TABLE]]")) {
-                  q.question += `\n[[TABLE]]${JSON.stringify(t.rows)}[[/TABLE]]`;
-                  usedTokens.add(t.idx);
+        // Fallback for tables omitted by AI
+        if (Array.isArray(extractedTables)) {
+          extractedTables.forEach((t) => {
+            if (usedTableTokens.has(t.idx) || !t.prevQuestionHeader) return;
+            const m = t.prevQuestionHeader.match(/^(?:câu|bài)\s*(\d+)/i);
+            const qNum = m ? parseInt(m[1], 10) : null;
+            const snippet = t.prevQuestionHeader.replace(/^(?:câu|bài)\s*\d+[\s.:\-)]*/i, "").substring(0, 30).trim();
+            const searchParts = t.partKey ? [t.partKey, "part1", "part2", "part3"] : ["part1", "part2", "part3"];
+
+            for (const partKey of searchParts) {
+              if (usedTableTokens.has(t.idx) || !Array.isArray(examData[partKey])) continue;
+              for (const q of examData[partKey]) {
+                if (usedTableTokens.has(t.idx) || !q || !q.question) continue;
+                const matchesSnippet = snippet && q.question.includes(snippet);
+                const matchesId = qNum !== null && q.id === qNum && (!snippet || matchesSnippet);
+                if (matchesId || matchesSnippet) {
+                  if (!q.question.includes("[[TABLE]]")) {
+                    const tableBlock = `[[TABLE]]${JSON.stringify(t.rows)}[[/TABLE]]`;
+                    const nextSub = (t.nextTextSnippet || "").substring(0, 30).trim();
+                    if (nextSub && q.question.includes(nextSub)) {
+                      const pos = q.question.indexOf(nextSub);
+                      q.question = q.question.slice(0, pos).trimEnd() + `\n${tableBlock}\n` + q.question.slice(pos).trimStart();
+                    } else {
+                      q.question += `\n${tableBlock}`;
+                    }
+                    usedTableTokens.add(t.idx);
+                  }
                 }
               }
-            });
+            }
           });
-        });
+        }
+
+        // Fallback for standalone images omitted by AI
+        if (Array.isArray(extractedImages)) {
+          extractedImages.forEach((img) => {
+            if (usedImageTokens.has(img.idx) || img.insideTable || !img.src) return;
+            const prevSub = (img.prevTextSnippet || "").substring(0, 28).trim();
+            const nextSub = (img.nextTextSnippet || "").substring(0, 28).trim();
+            const searchParts = img.partKey ? [img.partKey, "part1", "part2", "part3"] : ["part1", "part2", "part3"];
+
+            let targetQuestion = null;
+            for (const partKey of searchParts) {
+              if (targetQuestion || !Array.isArray(examData[partKey])) continue;
+              // Try matching by text snippet first (most accurate)
+              for (const q of examData[partKey]) {
+                if (!q || !q.question) continue;
+                if ((prevSub && q.question.includes(prevSub)) || (nextSub && q.question.includes(nextSub))) {
+                  targetQuestion = q;
+                  break;
+                }
+              }
+              // Otherwise match by questionNum in the primary partKey
+              if (!targetQuestion && partKey === img.partKey && img.questionNum !== null) {
+                targetQuestion = examData[partKey].find((q) => q && q.id === img.questionNum) || null;
+              }
+            }
+
+            if (targetQuestion && targetQuestion.question) {
+              const imgTag = `[[IMG]]${img.src}[[/IMG]]`;
+              if (nextSub && targetQuestion.question.includes(nextSub)) {
+                const pos = targetQuestion.question.indexOf(nextSub);
+                targetQuestion.question =
+                  targetQuestion.question.slice(0, pos).trimEnd() +
+                  `\n${imgTag}\n` +
+                  targetQuestion.question.slice(pos).trimStart();
+              } else {
+                targetQuestion.question = targetQuestion.question.trimEnd() + `\n${imgTag}`;
+              }
+              usedImageTokens.add(img.idx);
+            }
+          });
+        }
 
         return examData;
       }
@@ -447,6 +817,10 @@
       function normalizeQuestionTables(rawText) {
         if (!rawText) return "";
         let text = String(rawText);
+
+        if (text.includes("[[TABLE]]")) {
+          return text;
+        }
 
         // 1. Convert raw HTML <table>...</table> blocks if present
         if (/<table[\s>]/i.test(text) && /<\/table>/i.test(text)) {
@@ -586,7 +960,29 @@
 
       function formatQuestionContent(rawText) {
         if (rawText === null || rawText === undefined) return "";
-        const normalized = normalizeQuestionTables(rawText);
+        let normalized = normalizeQuestionTables(rawText);
+
+        // Recovery for already-saved exams where Câu 17's web form image was stripped prior to image extraction support
+        const formMockupHtml = `<div class="my-4 flex justify-center"><div class="inline-block bg-white border border-gray-300 rounded-lg px-5 py-3.5 shadow-sm text-gray-900 font-serif text-base leading-relaxed text-left"><div>1. Bạn có biết ngôn ngữ lập trình Python?</div><div class="flex items-center gap-1.5"><span>2.</span><span class="inline-block w-3.5 h-3.5 rounded-full border border-gray-600 bg-white"></span><span>Có</span></div><div class="flex items-center gap-1.5"><span>3.</span><span class="inline-block w-3.5 h-3.5 rounded-full border border-gray-600 bg-white"></span><span>Không</span></div><div class="mt-1"><span class="inline-block px-3 py-0.5 text-sm bg-gray-100 border border-gray-400 rounded shadow-inner text-gray-800 font-sans">Gửi đi</span></div></div></div>`;
+
+        // Recovery for already-saved exams where Part II Câu 1's "ĐĂNG KÝ THÀNH VIÊN" form image was stripped prior to image extraction support
+        const memberFormMockupHtml = `<div class="my-4 flex justify-center"><div class="inline-block bg-white border-2 border-gray-600 rounded-xl px-6 py-4 shadow-sm text-gray-900 font-serif text-xs sm:text-sm leading-relaxed text-left" style="min-width: 280px; max-width: 350px;"><div class="text-center font-bold uppercase tracking-wide mb-3 text-gray-900">ĐĂNG KÝ THÀNH VIÊN</div><div class="mb-2.5"><div class="mb-0.5 text-gray-800 font-normal">Họ tên</div><div class="w-48 px-2 py-0.5 border border-gray-300 rounded-sm bg-white text-gray-400 text-xs font-sans">Nguyễn Quang Hải</div></div><div class="mb-2.5 flex items-center gap-2 font-normal text-gray-800"><span>Giới tính</span><span class="inline-flex items-center gap-1"><span class="inline-block w-3 h-3 rounded-full border border-gray-500 bg-white"></span><span>Nam</span></span><span class="inline-flex items-center gap-1"><span class="inline-block w-3 h-3 rounded-full border border-gray-500 bg-white"></span><span>Nữ</span></span><span class="inline-flex items-center gap-1"><span class="inline-block w-3 h-3 rounded-full border border-gray-500 bg-white"></span><span>Khác</span></span></div><div class="mb-3 font-normal text-gray-800"><div class="mb-1">Câu lạc bộ</div><div class="grid grid-cols-3 gap-x-2 gap-y-1 text-xs"><span class="inline-flex items-center gap-1"><span class="inline-block w-3 h-3 border border-gray-500 rounded-[2px] bg-white"></span><span>Bóng đá</span></span><span class="inline-flex items-center gap-1"><span class="inline-block w-3 h-3 border border-gray-500 rounded-[2px] bg-white"></span><span>Cầu lông</span></span><span class="inline-flex items-center gap-1"><span class="inline-block w-3 h-3 border border-gray-500 rounded-[2px] bg-white"></span><span>Cờ vua</span></span><span class="inline-flex items-center gap-1"><span class="inline-block w-3 h-3 border border-gray-500 rounded-[2px] bg-white"></span><span>Bóng bàn</span></span><span class="inline-flex items-center gap-1"><span class="inline-block w-3 h-3 border border-gray-500 rounded-[2px] bg-white"></span><span>Hội họa</span></span><span class="inline-flex items-center gap-1"><span class="inline-block w-3 h-3 border border-gray-500 rounded-[2px] bg-white"></span><span>Múa hát</span></span></div></div><div class="flex justify-center gap-1.5 pt-1"><span class="px-2.5 py-0.5 text-xs bg-gray-100 border border-gray-400 rounded-sm text-gray-800 font-sans">Đăng ký</span><span class="px-2.5 py-0.5 text-xs bg-gray-100 border border-gray-400 rounded-sm text-gray-800 font-sans">Thoát</span></div></div></div>`;
+
+        let injectFormMockup = false;
+        let injectMemberFormMockup = false;
+        if (!normalized.includes("[[IMG") && !normalized.includes("[IMG]")) {
+          if (
+            /Cho\s+biểu\s+mẫu\s+sau\s+trên\s+một\s+trang\s+web/i.test(normalized) &&
+            /đoạn\s+mã\s+HTML\s+dùng\s+để\s+thực\s+hiện\s+dòng\s+số\s+2/i.test(normalized)
+          ) {
+            injectFormMockup = true;
+          } else if (
+            /biểu\s+mẫu\s+đăng\s+k[íý]\s+trực\s+tuyến\s+như\s+sau/i.test(normalized)
+          ) {
+            injectMemberFormMockup = true;
+          }
+        }
+
         const tokenRegex = /\[\[TABLE\]\]([\s\S]*?)\[\[\/TABLE\]\]/g;
         let resultHtml = "";
         let lastIndex = 0;
@@ -595,20 +991,44 @@
         while ((match = tokenRegex.exec(normalized)) !== null) {
           const beforeText = normalized.slice(lastIndex, match.index).replace(/\n+$/, "");
           if (beforeText) {
-            resultHtml += escapeHtml(beforeText);
+            resultHtml += renderTextWithImages(beforeText, false);
           }
           try {
             const rows = JSON.parse(match[1]);
             resultHtml += renderTableFromRows(rows);
           } catch (e) {
-            resultHtml += escapeHtml(match[1]);
+            resultHtml += renderTextWithImages(match[1], false);
           }
           lastIndex = tokenRegex.lastIndex;
         }
 
         const remaining = normalized.slice(lastIndex).replace(/^\n+/, lastIndex > 0 ? "" : "$&");
         if (remaining) {
-          resultHtml += escapeHtml(remaining);
+          if (injectFormMockup) {
+            const splitRegex = /(Cho\s+biểu\s+mẫu\s+sau\s+trên\s+một\s+trang\s+web\s*:?)\s*/i;
+            const m = remaining.match(splitRegex);
+            if (m) {
+              const idx = m.index + m[0].length;
+              const partA = remaining.slice(0, idx).replace(/\n+$/, "");
+              const partB = remaining.slice(idx).replace(/^\n+/, "");
+              resultHtml += renderTextWithImages(partA, false) + formMockupHtml + renderTextWithImages(partB, false);
+            } else {
+              resultHtml += renderTextWithImages(remaining, false) + formMockupHtml;
+            }
+          } else if (injectMemberFormMockup) {
+            const splitRegex = /(biểu\s+mẫu\s+đăng\s+k[íý]\s+trực\s+tuyến\s+như\s+sau\s*:?)\s*/i;
+            const m = remaining.match(splitRegex);
+            if (m) {
+              const idx = m.index + m[0].length;
+              const partA = remaining.slice(0, idx).replace(/\n+$/, "");
+              const partB = remaining.slice(idx).replace(/^\n+/, "");
+              resultHtml += renderTextWithImages(partA, false) + memberFormMockupHtml + renderTextWithImages(partB, false);
+            } else {
+              resultHtml += renderTextWithImages(remaining, false) + memberFormMockupHtml;
+            }
+          } else {
+            resultHtml += renderTextWithImages(remaining, false);
+          }
         }
         return resultHtml;
       }
@@ -1327,9 +1747,10 @@
                             <td class="py-3 px-4 text-center">
                                 <button onclick="copyToClipboard('${exam.id}')" class="text-blue-600 hover:text-blue-800 text-sm font-medium">${localStorage.getItem('vercelDomain') ? 'Copy Link Thi' : 'Copy Mã Bài Thi'}</button>
                             </td>
-                            <td class="py-3 px-4 text-center">
+                            <td class="py-3 px-4 text-center space-x-1">
+                                <button onclick="previewExam('${exam.id}')" class="bg-emerald-100 text-emerald-700 hover:bg-emerald-200 px-3 py-1 rounded text-sm font-medium transition">Xem đề / Thi thử</button>
                                 <button onclick="viewExamResults('${exam.id}')" class="bg-blue-100 text-blue-700 hover:bg-blue-200 px-3 py-1 rounded text-sm font-medium transition">Xem kết quả</button>
-                                <button onclick="deleteExam('${exam.id}')" class="bg-red-100 text-red-700 hover:bg-red-200 px-3 py-1 rounded text-sm font-medium transition ml-2">Xóa</button>
+                                <button onclick="deleteExam('${exam.id}')" class="bg-red-100 text-red-700 hover:bg-red-200 px-3 py-1 rounded text-sm font-medium transition">Xóa</button>
                             </td>
                         </tr>
                     `;
@@ -1347,6 +1768,39 @@
 
         return html;
       }
+
+      async function previewExam(examId) {
+        try {
+          const docRef = window.doc(window.db, "exams", examId);
+          const docSnap = await window.getDoc(docRef);
+          if (docSnap.exists()) {
+            state.examId = examId;
+            state.examData = JSON.parse(docSnap.data().data);
+            state.student.name = state.user?.displayName || "Giáo viên (Xem trước)";
+            state.student.className = "Admin";
+            state.answers = { part1: {}, part2: {}, part3: {} };
+            state.part2Track = "cs";
+            state.timeLeft = 3600;
+            if (state.timerInterval) clearInterval(state.timerInterval);
+            state.timerInterval = setInterval(() => {
+              state.timeLeft--;
+              updateTimerDisplay();
+              if (state.timeLeft <= 0) {
+                clearInterval(state.timerInterval);
+                submitExam();
+              }
+            }, 1000);
+            setScreen("exam");
+          } else {
+            showAlert("Không tìm thấy đề thi!");
+          }
+        } catch (error) {
+          console.error("Error previewing exam:", error);
+          showAlert("Lỗi khi mở đề thi: " + error.message);
+        }
+      }
+
+      window.previewExam = previewExam;
 
       function saveVercelDomain() {
         const domain = document.getElementById('vercelDomain').value.trim();
@@ -1373,7 +1827,7 @@
           // Clean up trailing slash
           const cleanDomain = vercelDomain.endsWith('/') ? vercelDomain.slice(0, -1) : vercelDomain;
           textToCopy = cleanDomain + "/?examId=" + examId;
-          alertMessage = "Đã copy link thi trực tiếp: " + textToCopy + "\\n\\nHọc sinh chỉ cần bấm vào link này là có thể làm bài ngay (không cần đăng nhập Gmail).";
+          alertMessage = "Đã copy link thi trực tiếp: " + textToCopy + "\\n\\nLưu ý: Nếu bạn vừa cập nhật tính năng mới trên AI Studio, hãy bấm nút 'Xem đề / Thi thử' ngay tại bảng này hoặc cập nhật (Deploy) bản mới lên Vercel để hiển thị đầy đủ hình ảnh.";
         }
         
         navigator.clipboard.writeText(textToCopy).then(() => {
@@ -1591,7 +2045,8 @@
       }
 
       async function parseExamWithGemini(html, examType) {
-        const { processedHtml, extractedTables } = preprocessTablesInHtml(html);
+        const { htmlWithImageTokens, extractedImages } = await preprocessImagesInHtml(html);
+        const { processedHtml, extractedTables } = preprocessTablesInHtml(htmlWithImageTokens);
         const tableRefNotes = extractedTables.length > 0
           ? "\n\nDỮ LIỆU THAM KHẢO CỦA CÁC BẢNG (Chỉ dùng để tham khảo giải đáp án nếu đáp án chưa gạch chân; trong trường 'question' BẮT BUỘC chỉ ghi ký hiệu [[TABLE_0]], [[TABLE_1]]... chứ KHÔNG chép lại nội dung bảng):\n" +
             extractedTables.map((t) => `${t.token}: ${JSON.stringify(t.rows)}`).join("\n")
@@ -1614,8 +2069,9 @@ YÊU CẦU CỰC KỲ QUAN TRỌNG:
 2. Nhận diện đáp án đúng: Đáp án thường được gạch chân (<u>), in đậm (<strong>), tô màu đỏ, hoặc có ký hiệu đặc biệt. Ưu tiên gạch chân cho Phần II.
 3. Nếu không thấy đáp án được đánh dấu, hãy sử dụng kiến thức chuyên môn để giải và đưa ra đáp án chính xác nhất.
 4. Đối với Phần II: Đảm bảo trích xuất đầy đủ tất cả các ý nhỏ (a, b, c, d) cho mỗi câu hỏi lớn. PHẢI trích xuất đủ cả 7 câu của Phần II theo đúng thứ tự xuất hiện (1, 2, 3, 4, 5, 6, 7).
-5. Giữ nguyên định dạng bảng, văn bản quan trọng, công thức, thẻ HTML hoặc mã nguồn (code) trong nội dung câu hỏi:
+5. Giữ nguyên định dạng bảng, hình ảnh, văn bản quan trọng, công thức, thẻ HTML hoặc mã nguồn (code) trong nội dung câu hỏi:
    - QUY TẮC BẢNG: Nếu trong nội dung câu hỏi có ký hiệu đánh dấu bảng dạng [[TABLE_0]], [[TABLE_1]]..., bạn BẮT BUỘC phải giữ nguyên chính xác ký hiệu [[TABLE_0]], [[TABLE_1]]... tại đúng vị trí xuất hiện trong trường "question" (ví dụ: "Câu 25. Chọn một trong hai ngôn ngữ...\n[[TABLE_0]]\nKết quả in ra là:"). TUYỆT ĐỐI KHÔNG xóa ký hiệu [[TABLE_...]] và KHÔNG tự ý gộp nội dung bảng thành văn bản phẳng.
+   - QUY TẮC HÌNH ẢNH: Nếu trong nội dung câu hỏi, ý nhỏ (a, b, c, d) hoặc phương án có ký hiệu đánh dấu hình ảnh dạng [[IMG_0]], [[IMG_1]]..., bạn BẮT BUỘC phải giữ nguyên chính xác ký hiệu [[IMG_0]], [[IMG_1]]... tại đúng vị trí xuất hiện (ví dụ: "Câu 17. Cho biểu mẫu sau trên một trang web:\n[[IMG_0]]\nPhương án nào sau đây nêu đúng đoạn mã HTML dùng để thực hiện dòng số 2?"). TUYỆT ĐỐI KHÔNG xóa hoặc bỏ sót bất kỳ ký hiệu [[IMG_...]] nào.
    - Nếu trong câu hỏi hoặc các phương án có chứa thẻ HTML (ví dụ: <style>, <link>, <head>, <script>, <div>...) hoặc toán tử so sánh (<, >), HÃY GIỮ NGUYÊN dưới dạng chuỗi văn bản thuần túy (không tự ý xóa thẻ hay cắt bớt).
    - PHẢI sử dụng ký tự xuống dòng (\n) để tách biệt các dòng code. TUYỆT ĐỐI KHÔNG được gộp các dòng code lại với nhau thành một dòng.
    - PHẢI giữ nguyên các khoảng trắng thụt lề (indentation) ở đầu dòng để code (như Python) có cấu trúc đúng.
@@ -1633,7 +2089,7 @@ ${processedHtml}${tableRefNotes}`;
           if (!ai) {
             console.warn("AI is not initialized (missing API Key). Falling back to manual parser.");
             showAlert("Chưa cấu hình API Key trên Vercel. Đang sử dụng bộ phân tích cơ bản (có thể không chính xác bằng AI).");
-            return restoreTablesInExamData(parseExamHTML(processedHtml), extractedTables);
+            return restoreTablesInExamData(parseExamHTML(processedHtml), extractedTables, extractedImages);
           }
 
           const response = await ai.models.generateContent({
@@ -1714,12 +2170,12 @@ ${processedHtml}${tableRefNotes}`;
           parsedData.part2.forEach((q, idx) => { q.id = idx + 1; });
           parsedData.part3.forEach((q, idx) => { q.id = idx + 1; });
           
-          return restoreTablesInExamData(parsedData, extractedTables);
+          return restoreTablesInExamData(parsedData, extractedTables, extractedImages);
         } catch (error) {
           console.error("Gemini Error:", error);
           showAlert("Lỗi khi dùng AI phân tích đề thi: " + error.message + "\n\nĐang chuyển sang chế độ phân tích cơ bản (có thể không chính xác).");
           // Fallback to manual parser if Gemini fails
-          return restoreTablesInExamData(parseExamHTML(processedHtml), extractedTables);
+          return restoreTablesInExamData(parseExamHTML(processedHtml), extractedTables, extractedImages);
         }
       }
 
@@ -2304,6 +2760,7 @@ ${processedHtml}${tableRefNotes}`;
                     <div class="sticky top-0 bg-white shadow-sm z-50 border-b border-gray-200">
                         <div class="max-w-5xl mx-auto px-4 py-3 flex justify-between items-center">
                             <div class="flex items-center">
+                                ${state.isAdmin ? `<button onclick="if(state.timerInterval) clearInterval(state.timerInterval); setScreen('admin_dashboard')" class="mr-3 px-3 py-1.5 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-lg text-xs sm:text-sm font-medium transition flex items-center"><svg class="w-4 h-4 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 19l-7-7m0 0l7-7m-7 7h18"></path></svg>Quay lại Admin</button>` : ""}
                                 <div class="bg-blue-100 p-2 rounded-lg mr-3 hidden sm:block">
                                     <svg class="w-6 h-6 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z"></path></svg>
                                 </div>
@@ -2375,7 +2832,7 @@ ${processedHtml}${tableRefNotes}`;
                               <div class="w-6 h-6 rounded-full border border-gray-300 flex items-center justify-center mr-3 flex-shrink-0 bg-white text-gray-600 font-medium text-sm peer-checked:bg-blue-600 peer-checked:border-blue-600 peer-checked:text-white group-hover:border-blue-400 transition-all">
                                   ${letter}
                               </div>
-                              <span class="text-gray-700 text-sm leading-relaxed pt-0.5 whitespace-pre-wrap">${escapeHtml(optText)}</span>
+                              <span class="text-gray-700 text-sm leading-relaxed pt-0.5 whitespace-pre-wrap">${formatQuestionContent(optText)}</span>
                           </label>
                       `;
             });
@@ -2551,14 +3008,14 @@ ${processedHtml}${tableRefNotes}`;
             const optAnswer = q.options && q.options[q.answer] !== undefined
               ? String(q.options[q.answer]).replace(/^[A-D][.:)\/]\s*/, "")
               : "";
-            let correctAnsText = `${String.fromCharCode(65 + q.answer)}. ${escapeHtml(optAnswer)}`;
+            let correctAnsText = `${String.fromCharCode(65 + q.answer)}. ${formatQuestionContent(optAnswer)}`;
             if (q.explanation) {
                correctAnsText += `<br><span class="text-gray-500 italic text-xs mt-1 block font-normal">Giải thích: ${formatQuestionContent(q.explanation)}</span>`;
             }
             let userAnsText = "Chưa trả lời";
             if (state.answers.part1 && state.answers.part1[q.id] !== undefined && q.options && q.options[state.answers.part1[q.id]] !== undefined) {
               const userOpt = String(q.options[state.answers.part1[q.id]]).replace(/^[A-D][.:)\/]\s*/, "");
-              userAnsText = `${String.fromCharCode(65 + state.answers.part1[q.id])}. ${escapeHtml(userOpt)}`;
+              userAnsText = `${String.fromCharCode(65 + state.answers.part1[q.id])}. ${formatQuestionContent(userOpt)}`;
             }
             wrongAnswers.push({
               part: "Phần I",
