@@ -55,6 +55,38 @@ async function startServer() {
     });
   });
 
+  const FALLBACK_MODELS = ['gemini-3.8-flash', 'gemini-flash-latest', 'gemini-3.1-flash-lite'];
+
+  async function generateContentWithFallback(preferredModel: string, contents: any, config?: any) {
+    const modelsToTry = [preferredModel, ...FALLBACK_MODELS.filter((m) => m !== preferredModel)];
+    let lastError: any = null;
+    for (const modelName of modelsToTry) {
+      try {
+        return await ai.models.generateContent({
+          model: modelName,
+          contents,
+          config,
+        });
+      } catch (err: any) {
+        lastError = err;
+        const msg = String(err?.message || err || '');
+        const isTransient =
+          err?.status === 503 ||
+          err?.status === 429 ||
+          msg.includes('503') ||
+          msg.includes('429') ||
+          msg.includes('UNAVAILABLE') ||
+          msg.includes('RESOURCE_EXHAUSTED') ||
+          msg.includes('high demand');
+        if (!isTransient) {
+          throw err;
+        }
+        console.warn(`Model ${modelName} returned transient error (${msg.slice(0, 120)}), falling back to next model...`);
+      }
+    }
+    throw lastError;
+  }
+
   // Gemini exam parsing endpoint
   app.post('/api/gemini/parse-exam', async (req: Request, res: Response) => {
     try {
@@ -69,69 +101,65 @@ async function startServer() {
         });
       }
 
-      const response = await ai.models.generateContent({
-        model: 'gemini-3.8-flash',
-        contents: prompt,
-        config: {
-          responseMimeType: 'application/json',
-          responseSchema: {
-            type: Type.OBJECT,
-            properties: {
-              part1: {
-                type: Type.ARRAY,
-                items: {
-                  type: Type.OBJECT,
-                  properties: {
-                    id: { type: Type.NUMBER },
-                    question: { type: Type.STRING },
-                    options: { type: Type.ARRAY, items: { type: Type.STRING } },
-                    answer: { type: Type.NUMBER },
-                    explanation: { type: Type.STRING, description: 'Detailed explanation if present in the text' },
-                  },
-                  required: ['id', 'question', 'options', 'answer'],
+      const response = await generateContentWithFallback('gemini-3.8-flash', prompt, {
+        responseMimeType: 'application/json',
+        responseSchema: {
+          type: Type.OBJECT,
+          properties: {
+            part1: {
+              type: Type.ARRAY,
+              items: {
+                type: Type.OBJECT,
+                properties: {
+                  id: { type: Type.NUMBER },
+                  question: { type: Type.STRING },
+                  options: { type: Type.ARRAY, items: { type: Type.STRING } },
+                  answer: { type: Type.NUMBER },
+                  explanation: { type: Type.STRING, description: 'Detailed explanation if present in the text' },
                 },
-              },
-              part2: {
-                type: Type.ARRAY,
-                items: {
-                  type: Type.OBJECT,
-                  properties: {
-                    id: { type: Type.NUMBER },
-                    question: { type: Type.STRING },
-                    explanation: { type: Type.STRING, description: 'Detailed explanation if present for the overall question' },
-                    subQuestions: {
-                      type: Type.ARRAY,
-                      items: {
-                        type: Type.OBJECT,
-                        properties: {
-                          id: { type: Type.STRING },
-                          text: { type: Type.STRING, description: 'The complete text of the sub-question, including any multi-line code blocks, SQL statements, or explanations' },
-                          answer: { type: Type.BOOLEAN, description: 'True if the sub-question is underlined in HTML, False otherwise.' },
-                          explanation: { type: Type.STRING, description: 'Detailed explanation for this specific sub-question if present' },
-                        },
-                        required: ['id', 'text', 'answer'],
-                      },
-                    },
-                  },
-                  required: ['id', 'question', 'subQuestions'],
-                },
-              },
-              part3: {
-                type: Type.ARRAY,
-                items: {
-                  type: Type.OBJECT,
-                  properties: {
-                    id: { type: Type.NUMBER },
-                    question: { type: Type.STRING },
-                    answer: { type: Type.STRING },
-                    explanation: { type: Type.STRING, description: 'Detailed explanation if present in the text' },
-                  },
-                  required: ['id', 'question', 'answer'],
-                },
+                required: ['id', 'question', 'options', 'answer'],
               },
             },
-            required: ['part1', 'part2', 'part3'],
+            part2: {
+              type: Type.ARRAY,
+              items: {
+                type: Type.OBJECT,
+                properties: {
+                  id: { type: Type.NUMBER },
+                  question: { type: Type.STRING },
+                  explanation: { type: Type.STRING, description: 'Detailed explanation if present for the overall question' },
+                  subQuestions: {
+                    type: Type.ARRAY,
+                    items: {
+                      type: Type.OBJECT,
+                      properties: {
+                        id: { type: Type.STRING },
+                        text: { type: Type.STRING, description: 'The complete text of the sub-question, including any multi-line code blocks, SQL statements, or explanations' },
+                        answer: { type: Type.BOOLEAN, description: 'True if the sub-question is underlined in HTML, False otherwise.' },
+                        explanation: { type: Type.STRING, description: 'Detailed explanation for this specific sub-question if present' },
+                      },
+                      required: ['id', 'text', 'answer'],
+                    },
+                  },
+                },
+                required: ['id', 'question', 'subQuestions'],
+              },
+            },
+            part3: {
+              type: Type.ARRAY,
+              items: {
+                type: Type.OBJECT,
+                properties: {
+                  id: { type: Type.NUMBER },
+                  question: { type: Type.STRING },
+                  answer: { type: Type.STRING },
+                  explanation: { type: Type.STRING, description: 'Detailed explanation if present in the text' },
+                },
+                required: ['id', 'question', 'answer'],
+              },
+            },
           },
+          required: ['part1', 'part2', 'part3'],
         },
       });
 
@@ -152,11 +180,7 @@ async function startServer() {
         });
       }
 
-      const response = await ai.models.generateContent({
-        model,
-        contents,
-        config,
-      });
+      const response = await generateContentWithFallback(model, contents, config);
 
       return res.json({ text: response.text });
     } catch (error: any) {

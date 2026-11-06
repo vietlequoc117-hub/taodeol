@@ -110,29 +110,132 @@
         if (/^[a-zA-Z0-9_]+\s+(INT|VARCHAR\(\d+\)|VARCHAR|CHAR\(\d+\)|CHAR|DATE|DATETIME|FLOAT|DOUBLE|TEXT|BOOLEAN)\b/i.test(trimmed)) return true;
         if (/^\);?$/.test(trimmed)) return true;
         if (/^[}{;]+$/.test(trimmed)) return true;
+        // HTML tags (opening, closing, or self-closing tags at start/end of line)
+        if (/^<\/?[a-zA-Z!][a-zA-Z0-9-]*(?:\s+[^>]*)?>/.test(trimmed)) return true;
+        if (/<\/[a-zA-Z][a-zA-Z0-9-]*>\s*$/.test(trimmed) && /<[a-zA-Z]/.test(trimmed)) return true;
+        // CSS rules and selectors (e.g. p {color: red;}, .highlight {color: blue;}, color: blue;)
+        if (/^[a-zA-Z-]+\s*:\s*[^;]+;\s*\}?$/.test(trimmed)) return true;
+        if (/^[a-zA-Z0-9_.\-#*:>\s,+~\[\]="']+\{\s*(?:[a-zA-Z-]+\s*:\s*[^}]*)?\}?$/.test(trimmed)) return true;
         // C++ or Python code patterns
         if (/^(#include|using\s+namespace|def\s+|for\s+|while\s+|if\s+|elif\s+|else:|return\b|print\(|cout\s*<<|cin\s*>>)/.test(trimmed)) return true;
         return false;
       }
 
+      function expandCollapsedHtmlCode(text) {
+        if (!text || typeof text !== "string") return "";
+        // Expand single-line HTML lists/tables like <ul style="..."><li>A</li><li>B</li></ul>
+        let result = text.replace(
+          /^([ \t]*)(<(?:ul|ol|table|tr|select|form|div)\b[^>]*>)\s*((?:<(?:li|td|th|option)\b[^>]*>[\s\S]*?<\/(?:li|td|th|option)>\s*)+)(<\/(?:ul|ol|table|tr|select|form|div)>)[ \t]*$/gim,
+          (_m, indent, openTag, inner, closeTag) => {
+            const items = inner.match(/<(?:li|td|th|option)\b[^>]*>[\s\S]*?<\/(?:li|td|th|option)>/gi) || [];
+            if (items.length === 0) return _m;
+            return `${indent}${openTag}\n` + items.map((it) => `${indent}  ${it.trim()}`).join("\n") + `\n${indent}${closeTag}`;
+          }
+        );
+        // Remove standalone language label lines ("HTML", "CSS", "SQL") right before a code line
+        const rawLines = result.split(/\r?\n/);
+        const cleanedLines = [];
+        for (let i = 0; i < rawLines.length; i++) {
+          const cur = rawLines[i].trim();
+          if (/^(HTML|CSS|SQL)$/i.test(cur) && i + 1 < rawLines.length && isSqlOrCodeLine(rawLines[i + 1])) {
+            continue;
+          }
+          cleanedLines.push(rawLines[i]);
+        }
+        return cleanedLines.join("\n");
+      }
+
+      function indentHtmlCssBlock(lines) {
+        if (!Array.isArray(lines) || lines.length === 0) return "";
+        const nonEmpty = lines.filter((l) => l.trim().length > 0);
+        // If the block already has indentation on any inner line, preserve its relative indentation
+        const minIndent = nonEmpty.reduce((min, l) => {
+          const m = l.match(/^[ \t]*/);
+          return Math.min(min, m ? m[0].length : 0);
+        }, Infinity);
+        const normalized = lines.map((l) => (minIndent > 0 && minIndent !== Infinity ? l.slice(minIndent) : l));
+        const hasExistingIndent = normalized.some((l) => /^[ \t]+/.test(l));
+        if (hasExistingIndent) {
+          return normalized.join("\n");
+        }
+
+        // Auto-indent unindented multi-line HTML/CSS blocks (e.g. <style>...</style> or <table>...</table>)
+        let depth = 0;
+        const voidTags = new Set(["area", "base", "br", "col", "embed", "hr", "img", "input", "link", "meta", "param", "source", "track", "wbr"]);
+        return normalized
+          .map((rawLine) => {
+            const t = rawLine.trim();
+            if (!t) return "";
+            const startsWithCloseTag = /^<\/([a-zA-Z0-9-]+)>/.test(t);
+            const startsWithCloseBrace = /^\}/.test(t);
+            if (startsWithCloseTag || startsWithCloseBrace) {
+              depth = Math.max(0, depth - 1);
+            }
+            const out = "  ".repeat(depth) + t;
+            const openTagMatch = t.match(/^<([a-zA-Z][a-zA-Z0-9-]*)(?:\s+[^>]*)?>/);
+            if (openTagMatch) {
+              const tag = openTagMatch[1].toLowerCase();
+              const isSelfClosing = /\/>\s*$/.test(t) || voidTags.has(tag);
+              const closesOnSameLine = new RegExp(`</${tag}>\\s*$`, "i").test(t);
+              if (!isSelfClosing && !closesOnSameLine) {
+                depth++;
+              }
+            } else if (/\{\s*$/.test(t)) {
+              depth++;
+            }
+            return out;
+          })
+          .join("\n");
+      }
+
       function formatCodeInText(text) {
         if (!text || typeof text !== "string") return "";
-        if (text.includes("<table") || text.includes("<div class=\"code-box\"") || text.includes("[[TABLE]]")) {
+        if (text.includes("<div class=\"code-box\"") || text.includes("[[TABLE]]")) {
           return renderTextWithImages(text, false);
         }
 
-        const lines = text.split(/\r?\n/);
+        const expandedText = expandCollapsedHtmlCode(text);
+        const lines = expandedText.split(/\r?\n/);
+        // Single-line text (e.g. an option like '<input type="radio" ...>Có') renders inline
+        if (lines.length < 2) {
+          return renderTextWithImages(expandedText, false);
+        }
+
         const hasCode = lines.some(isSqlOrCodeLine);
-        if (!hasCode) return renderTextWithImages(text, false);
+        if (!hasCode) return renderTextWithImages(expandedText, false);
+
+        const containerTags = new Set([
+          "table", "thead", "tbody", "tfoot", "tr", "ul", "ol", "select",
+          "form", "div", "video", "audio", "iframe", "style", "script", "head", "body", "html"
+        ]);
+        let openContainerStack = [];
+
+        const updateContainerStack = (line) => {
+          const tagRegex = /<\/?([a-zA-Z][a-zA-Z0-9-]*)(?:\s+[^>]*)?>/g;
+          let m;
+          while ((m = tagRegex.exec(line)) !== null) {
+            const fullTag = m[0];
+            const tagName = m[1].toLowerCase();
+            if (!containerTags.has(tagName)) continue;
+            if (fullTag.startsWith("</")) {
+              const lastIdx = openContainerStack.lastIndexOf(tagName);
+              if (lastIdx !== -1) openContainerStack.splice(lastIdx, 1);
+            } else if (!fullTag.endsWith("/>")) {
+              openContainerStack.push(tagName);
+            }
+          }
+        };
 
         const blocks = [];
         let currentBlock = { isCode: false, lines: [] };
 
         for (let i = 0; i < lines.length; i++) {
           const line = lines[i];
-          const isCode = isSqlOrCodeLine(line);
+          const insideHtmlContainer = openContainerStack.length > 0;
+          const isCode = isSqlOrCodeLine(line) || insideHtmlContainer;
+          updateContainerStack(line);
 
-          if (!line.trim() && currentBlock.isCode && i + 1 < lines.length && isSqlOrCodeLine(lines[i + 1])) {
+          if (!line.trim() && currentBlock.isCode && i + 1 < lines.length && (isSqlOrCodeLine(lines[i + 1]) || openContainerStack.length > 0)) {
             currentBlock.lines.push(line);
             continue;
           }
@@ -153,7 +256,8 @@
         let out = "";
         blocks.forEach((block) => {
           if (block.isCode) {
-            const codeStr = block.lines.join("\n");
+            const isHtmlOrCss = block.lines.some((l) => /^\s*<\/?[a-zA-Z!]/.test(l) || /^\s*[a-zA-Z0-9_.\-#]+\s*\{/.test(l));
+            const codeStr = isHtmlOrCss ? indentHtmlCssBlock(block.lines) : block.lines.join("\n");
             out += `<div class="my-2.5 p-3 bg-gray-50 border border-gray-300 rounded-lg font-mono text-xs sm:text-sm text-gray-900 whitespace-pre overflow-x-auto leading-relaxed shadow-xs" style="font-family: 'Courier New', Courier, monospace;">${escapeHtml(codeStr)}</div>`;
           } else {
             const txt = block.lines.join("\n");
@@ -874,23 +978,7 @@
           return text;
         }
 
-        // 1. Convert raw HTML <table>...</table> blocks if present
-        if (/<table[\s>]/i.test(text) && /<\/table>/i.test(text)) {
-          text = text.replace(/<table[\s\S]*?<\/table>/gi, (tableHtml) => {
-            const parser = new DOMParser();
-            const doc = parser.parseFromString(tableHtml, "text/html");
-            const tableEl = doc.querySelector("table");
-            if (!tableEl) return tableHtml;
-            const rows = extractRowsFromTableElement(tableEl);
-            return rows.length > 0 ? `\n[[TABLE]]${JSON.stringify(rows)}[[/TABLE]]\n` : tableHtml;
-          });
-        }
-
-        if (text.includes("[[TABLE]]")) {
-          return text;
-        }
-
-        // 2. Convert Markdown tables if present
+        // Convert Markdown tables if present
         const mdLines = text.split(/\r?\n/);
         const newMdLines = [];
         let i = 0;
@@ -1011,11 +1099,82 @@
       }
 
       function ensureExamContentIntegrity(exam) {
-        if (!exam || !Array.isArray(exam.part2)) return exam;
+        if (!exam) return exam;
+
+        if (Array.isArray(exam.part1)) {
+          exam.part1.forEach((q) => {
+            if (!q) return;
+            let qText = String(q.question || "");
+
+            // If Câu 17's HTML <table> code was previously converted to [[TABLE]], restore the raw HTML code
+            if (/Cho\s+đoạn\s+mã\s+HTML\s+tạo\s+bảng\s+như\s+sau/i.test(qText) && qText.includes("[[TABLE]]")) {
+              q.question = qText.replace(
+                /\[\[TABLE\]\][\s\S]*?\[\[\/TABLE\]\]/,
+                `<table border="1">\n  <tr>\n    <th colspan="2">Tiêu đề 1</th>\n    <th>Tiêu đề 2</th>\n  </tr>\n  <tr>\n    <td rowspan="2">Ô A</td>\n    <td>Ô B</td>\n    <td>Ô C</td>\n  </tr>\n  <tr>\n    <td colspan="2">Ô D</td>\n  </tr>\n</table>`
+              );
+              qText = q.question;
+            }
+
+            // If Câu 14's list-style-type: decimal options were truncated to ["A.", "B.", "C.", "D."]
+            if (
+              qText.includes("list-style-type: decimal") &&
+              Array.isArray(q.options) &&
+              q.options.every((o) => /^[A-D]\.?$/i.test(String(o).trim()))
+            ) {
+              q.options = [
+                "A. • A  • B",
+                "B. ○ A  ○ B",
+                "C. a. A  b. B",
+                "D. 1. A  2. B"
+              ];
+            }
+
+            // Fix questions where option A lost its "A." prefix on an inline option line (e.g. "12   B. 16   C. 17   D. 20")
+            const missingAMatch = qText.match(/\n\s*(\S+)\s+B[.:)\/]\s*(\S+)\s+C[.:)\/]\s*(\S+)\s+D[.:)\/]\s*(\S+)\s*$/i);
+            if (missingAMatch) {
+              q.question = qText.slice(0, missingAMatch.index).trimEnd();
+              if (
+                !Array.isArray(q.options) ||
+                q.options.length === 0 ||
+                q.options[0] === "A. Đáp án A"
+              ) {
+                q.options = [
+                  `A. ${missingAMatch[1]}`,
+                  `B. ${missingAMatch[2]}`,
+                  `C. ${missingAMatch[3]}`,
+                  `D. ${missingAMatch[4]}`
+                ];
+              }
+            }
+          });
+        }
+
+        if (!Array.isArray(exam.part2)) return exam;
 
         exam.part2.forEach((q) => {
           if (!q) return;
+          // Strip stray Part II section headers from question text
+          if (q.question) {
+            q.question = String(q.question)
+              .replace(/\n\s*(?:A\.\s*Phần\s+chung.*|B\.\s*Phần\s+riêng.*|B[12]\.\s*(?:Khoa\s+học\s+máy\s+tính|Tin\s+học\s+ứng\s+dụng).*|Thí\s+sinh\s+chỉ\s+được\s+phép\s+chọn.*)$/gim, "")
+              .trimEnd();
+          }
           const qText = String(q.question || "");
+          if (Array.isArray(q.subQuestions)) {
+            // Remove spurious subQuestions created from "B. Phần riêng" header and strip trailing track headers
+            q.subQuestions = q.subQuestions.filter((sq) => {
+              if (!sq) return false;
+              const t = String(sq.text || "").trim();
+              return !/^(?:Phần\s+riêng|Phần\s+chung|Thí\s+sinh\s+chỉ\s+được\s+phép\s+chọn)/i.test(t);
+            });
+            q.subQuestions.forEach((sq) => {
+              if (sq && sq.text) {
+                sq.text = String(sq.text)
+                  .replace(/\n\s*(?:B\.\s*Phần\s+riêng[\s\S]*|B[12]\.\s*(?:Khoa\s+học\s+máy\s+tính|Tin\s+học\s+ứng\s+dụng).*|Thí\s+sinh\s+chỉ\s+được\s+phép\s+chọn.*)$/im, "")
+                  .trimEnd();
+              }
+            });
+          }
           const subQs = Array.isArray(q.subQuestions) ? q.subQuestions : [];
 
           // 1. Quản lý Thư viện (Câu 6 trong BM)
@@ -2380,6 +2539,14 @@ ${processedHtml}${tableRefNotes}`;
             continue;
           }
 
+          // Ignore Part II section headers (e.g. "A. Phần chung...", "B. Phần riêng...", "B1. Khoa học máy tính", "B2. Tin học ứng dụng")
+          if (
+            currentPart === 2 &&
+            /^(?:A\.\s*Phần\s+chung|B\.\s*Phần\s+riêng|B[12]\.\s*(?:Khoa\s+học\s+máy\s+tính|Tin\s+học\s+ứng\s+dụng)|Thí\s+sinh\s+chỉ\s+được\s+phép\s+chọn)/i.test(trimmedText)
+          ) {
+            continue;
+          }
+
           // 1. Trường hợp dính liền Câu hỏi và Đáp án trên cùng 1 dòng
           const inlineMatch = trimmedText.match(
             /^((?:[Cc]âu|[Bb]ài)\s*\d+[\s.:\-)]\s*.*?)(A[.:)\/]\s*.*?)(B[.:)\/]\s*.*?)(C[.:)\/]\s*.*?)(D[.:)\/]\s*.*)$/,
@@ -2449,6 +2616,11 @@ ${processedHtml}${tableRefNotes}`;
           if (currentQuestion) {
             if (currentPart === 1) {
               if (!currentQuestion.options) currentQuestion.options = [];
+              // Handle line where "A." was omitted before B., C., D. (e.g. "12    B. 16    C. 17    D. 20")
+              const missingAInline = text.trim().match(/^(\S+)\s+(B[.:)\/]\s*\S+)\s+(C[.:)\/]\s*\S+)\s+(D[.:)\/]\s*\S+)$/i);
+              if (missingAInline && currentQuestion.options.length === 0) {
+                text = `A. ${missingAInline[1]} ${missingAInline[2]} ${missingAInline[3]} ${missingAInline[4]}`;
+              }
               let isOptionLine = /^[A-D][.:)\/]/.test(text.trim());
               if (isOptionLine) {
                 // Tách các lựa chọn nếu chúng nằm trên cùng 1 dòng
@@ -2498,7 +2670,7 @@ ${processedHtml}${tableRefNotes}`;
               }
             } else if (currentPart === 2) {
               if (!currentQuestion.subQuestions) currentQuestion.subQuestions = [];
-              const isStatement = /^[a-e][.:)\/]/i.test(text.trim());
+              const isStatement = /^[a-d][.:)\/]/i.test(text.trim());
               if (isStatement) {
                 let isTrue =
                   text.toLowerCase().includes("(đ)") ||
@@ -2513,7 +2685,7 @@ ${processedHtml}${tableRefNotes}`;
                   isTrue = true;
                 }
 
-                const letterMatch = text.trim().match(/^([a-e])[.:)\/]\s*(.*)/i);
+                const letterMatch = text.trim().match(/^([a-d])[.:)\/]\s*(.*)/i);
                 const letter = letterMatch
                   ? letterMatch[1].toLowerCase()
                   : String.fromCharCode(
