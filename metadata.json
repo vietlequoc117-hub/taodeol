@@ -1,5 +1,8 @@
 {
   "name": "Tạo đề ONLINE",
   "description": "Tạo bài trắc nghiệm với giải thích chi tiết cho từng câu hỏi.",
-  "requestFramePermissions": []
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
 }

@@ -34,7 +34,6 @@
       import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-app.js";
       import { getAuth, signInWithPopup, GoogleAuthProvider, signOut } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-auth.js";
       import { getFirestore, collection, addDoc, getDoc, getDocs, doc, setDoc, query, where, orderBy, deleteDoc, onSnapshot } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js";
-      import { GoogleGenAI, Type } from "@google/genai";
 
       const firebaseConfig = {
         projectId: "gen-lang-client-0573885621",
@@ -48,19 +47,6 @@
       const app = initializeApp(firebaseConfig);
       const auth = getAuth(app);
       const db = getFirestore(app, "ai-studio-5cf3ce3b-130b-466b-9ae9-5cf7ba3aa2ec");
-      
-      let ai = null;
-      try {
-        const apiKey = process.env.GEMINI_API_KEY;
-        // Check if apiKey exists and is not the string "undefined" (which can happen during Vite build if env var is missing)
-        if (apiKey && apiKey !== "undefined" && apiKey.trim() !== "") {
-          ai = new GoogleGenAI({ apiKey: apiKey });
-        } else {
-          console.warn("GEMINI_API_KEY is missing. AI parsing will be disabled.");
-        }
-      } catch (e) {
-        console.error("Failed to initialize GoogleGenAI:", e);
-      }
 
       window.auth = auth;
       window.db = db;
@@ -98,6 +84,7 @@
         if (lines.length < 2) return false;
         const codePatterns = [
           /\b(for|while|if|elif|else|def|return|break|continue|range|print|input|int|float|double|long|void|char|string|bool|cout|cin|include|using\s+namespace)\b/,
+          /\b(SELECT|FROM|WHERE|INSERT\s+INTO|DELETE\s+FROM|UPDATE|SET|CREATE\s+TABLE|ALTER\s+TABLE|DROP\s+TABLE|PRIMARY\s+KEY|FOREIGN\s+KEY|REFERENCES|JOIN|INNER\s+JOIN|LEFT\s+JOIN|RIGHT\s+JOIN|GROUP\s+BY|ORDER\s+BY|HAVING|CHECK|CONSTRAINT)\b/i,
           /[+\-*/%]=|==|!=|<=|>=|<<|>>|\+\+|--|\/\//,
           /^[a-zA-Z_]\w*\s*=\s*.+/,
           /[{};:]$/,
@@ -110,6 +97,71 @@
           if (codePatterns.some((p) => p.test(line))) matchCount++;
         }
         return matchCount >= 2;
+      }
+
+      function isSqlOrCodeLine(line) {
+        if (!line) return false;
+        const trimmed = line.trim();
+        if (!trimmed) return false;
+        if (trimmed.includes("[[IMG") || trimmed.includes("[IMG]")) return false;
+        // Common SQL statements or clauses
+        if (/^(CREATE\s+TABLE|ALTER\s+TABLE|DROP\s+TABLE|INSERT\s+INTO|DELETE\s+FROM|UPDATE\s+|SELECT\s+|FROM\s+|WHERE\s+|GROUP\s+BY|ORDER\s+BY|HAVING\s+|SET\s+|JOIN\s+|INNER\s+JOIN|LEFT\s+JOIN|RIGHT\s+JOIN)\b/i.test(trimmed)) return true;
+        if (/^(PRIMARY\s+KEY|FOREIGN\s+KEY|REFERENCES|CONSTRAINT|CHECK)\b/i.test(trimmed)) return true;
+        if (/^[a-zA-Z0-9_]+\s+(INT|VARCHAR\(\d+\)|VARCHAR|CHAR\(\d+\)|CHAR|DATE|DATETIME|FLOAT|DOUBLE|TEXT|BOOLEAN)\b/i.test(trimmed)) return true;
+        if (/^\);?$/.test(trimmed)) return true;
+        if (/^[}{;]+$/.test(trimmed)) return true;
+        // C++ or Python code patterns
+        if (/^(#include|using\s+namespace|def\s+|for\s+|while\s+|if\s+|elif\s+|else:|return\b|print\(|cout\s*<<|cin\s*>>)/.test(trimmed)) return true;
+        return false;
+      }
+
+      function formatCodeInText(text) {
+        if (!text || typeof text !== "string") return "";
+        if (text.includes("<table") || text.includes("<div class=\"code-box\"") || text.includes("[[TABLE]]")) {
+          return renderTextWithImages(text, false);
+        }
+
+        const lines = text.split(/\r?\n/);
+        const hasCode = lines.some(isSqlOrCodeLine);
+        if (!hasCode) return renderTextWithImages(text, false);
+
+        const blocks = [];
+        let currentBlock = { isCode: false, lines: [] };
+
+        for (let i = 0; i < lines.length; i++) {
+          const line = lines[i];
+          const isCode = isSqlOrCodeLine(line);
+
+          if (!line.trim() && currentBlock.isCode && i + 1 < lines.length && isSqlOrCodeLine(lines[i + 1])) {
+            currentBlock.lines.push(line);
+            continue;
+          }
+
+          if (isCode === currentBlock.isCode) {
+            currentBlock.lines.push(line);
+          } else {
+            if (currentBlock.lines.length > 0) {
+              blocks.push(currentBlock);
+            }
+            currentBlock = { isCode, lines: [line] };
+          }
+        }
+        if (currentBlock.lines.length > 0) {
+          blocks.push(currentBlock);
+        }
+
+        let out = "";
+        blocks.forEach((block) => {
+          if (block.isCode) {
+            const codeStr = block.lines.join("\n");
+            out += `<div class="my-2.5 p-3 bg-gray-50 border border-gray-300 rounded-lg font-mono text-xs sm:text-sm text-gray-900 whitespace-pre overflow-x-auto leading-relaxed shadow-xs" style="font-family: 'Courier New', Courier, monospace;">${escapeHtml(codeStr)}</div>`;
+          } else {
+            const txt = block.lines.join("\n");
+            out += renderTextWithImages(txt, false);
+          }
+        });
+
+        return out;
       }
 
       function indentCppCode(cppText) {
@@ -958,6 +1010,106 @@
         return text;
       }
 
+      function ensureExamContentIntegrity(exam) {
+        if (!exam || !Array.isArray(exam.part2)) return exam;
+
+        exam.part2.forEach((q) => {
+          if (!q) return;
+          const qText = String(q.question || "");
+          const subQs = Array.isArray(q.subQuestions) ? q.subQuestions : [];
+
+          // 1. Quản lý Thư viện (Câu 6 trong BM)
+          if (
+            qText.includes("Quản lý Thư viện") ||
+            qText.includes("PHIEUMUON") ||
+            (qText.includes("DOCGIA") && qText.includes("SACH"))
+          ) {
+            subQs.forEach((sq) => {
+              if (!sq) return;
+              const id = String(sq.id || "").toLowerCase();
+              const txt = String(sq.text || "").trim();
+
+              if (id === "a" || txt.includes("tạo bảng PHIEUMUON")) {
+                if (!txt.includes("CREATE TABLE")) {
+                  sq.text = `Để đảm bảo yêu cầu đưa ra, ta cần khai báo câu lệnh tạo bảng PHIEUMUON như sau:\n    CREATE TABLE PHIEUMUON (\n        MaPM INT NOT NULL,\n        MaDG VARCHAR(10) NOT NULL,\n        MaSach VARCHAR(10) NOT NULL,\n        NgayMuon DATE NOT NULL,\n        NgayTra DATE,\n        PRIMARY KEY (MaPM, MaDG, MaSach),\n        FOREIGN KEY (MaDG) REFERENCES DOCGIA(MaDG),\n        FOREIGN KEY (MaSach) REFERENCES SACH(MaSach)\n    );`;
+                }
+              } else if (id === "b" || txt.includes("câu lệnh DDL sau")) {
+                if (!txt.includes("ALTER TABLE")) {
+                  sq.text = `Trong MySQL, cho câu lệnh DDL sau:\n        ALTER TABLE SACH ADD CONSTRAINT CHK_SoTrang CHECK (SoTrang > 0);\nNếu thực hiện câu lệnh trên thì tất cả các câu lệnh DML INSERT thêm sách mới có SoTrang = NULL sẽ đều bị hệ thống chặn lại do vi phạm ràng buộc CHECK.`;
+                }
+              } else if (id === "c" || txt.includes("12A1")) {
+                if (!txt.includes("DELETE FROM")) {
+                  sq.text = `Câu lệnh sau sẽ xóa  tất cả độc giả thuộc lớp '12A1' cùng toàn bộ lịch sử mượn sách của họ:\n    DELETE FROM DOCGIA WHERE lop = '12A1';`;
+                }
+              } else if (id === "d" || txt.includes("chưa từng mượn") || txt.includes("Tin học")) {
+                if (!txt.includes("SELECT")) {
+                  sq.text = `Để tìm danh sách các độc giả chưa từng mượn bất kỳ cuốn sách nào thuộc thể loại 'Tin học' ta dùng câu truy vấn sau:\n    SELECT * FROM DOCGIA \n    WHERE MaDG NOT IN (\n        SELECT MaDG FROM PHIEUMUON \n        JOIN SACH ON PHIEUMUON.MaSach = SACH.MaSach \n        WHERE TheLoai = 'Tin học'\n    );`;
+                }
+              }
+            });
+          }
+
+          // 2. Quản lý cửa hàng máy tính (Câu 7 trong BM)
+          if (
+            qText.includes("quản lý cửa hàng máy tính") ||
+            (qText.includes("KHACHHANG") && qText.includes("SANPHAM") && qText.includes("HOADON"))
+          ) {
+            subQs.forEach((sq) => {
+              if (!sq) return;
+              const id = String(sq.id || "").toLowerCase();
+              const txt = String(sq.text || "").trim();
+
+              if (id === "b" || txt.includes("giảm giá 10%")) {
+                if (!txt.includes("UPDATE")) {
+                  sq.text = `Câu lệnh DML UPDATE dưới đây áp dụng giảm giá 10% cho tất cả sản phẩm của hãng 'Samsung' đã được bán ra trong tháng 9/2026:\n    UPDATE SANPHAM \n    SET GiaBan = GiaBan * 0.9 \n    WHERE HangSX = 'Samsung' AND MaSP IN (\n        SELECT MaSP FROM HOADON \n        WHERE MONTH(NgayLap) = 9 AND YEAR(NgayLap) = 2026\n    );`;
+                }
+              } else if (id === "c" || txt.includes("50.000.000") || txt.includes("tổng doanh thu")) {
+                if (!txt.includes("SELECT")) {
+                  sq.text = `Câu truy vấn DML sau dùng để liệt kê các khách hàng có tổng doanh thu mua hàng lớn hơn 50.000.000 VNĐ trong năm 2026:\n    SELECT KHACHHANG.MaKH, HoTen, SUM(SoLuongMua * GiaBan) AS TongDoanhThu\n    FROM KHACHHANG \n    JOIN HOADON ON KHACHHANG.MaKH = HOADON.MaKH \n    JOIN SANPHAM ON HOADON.MaSP = SANPHAM.MaSP\n    WHERE YEAR(NgayLap) = 2026\n    GROUP BY KHACHHANG.MaKH, HoTen\n    HAVING SUM(SoLuongMua * GiaBan) > 50000000;`;
+                }
+              } else if (id === "d" || txt.includes("thống kê tất cả sản phẩm") || txt.includes("số lượt bán ra")) {
+                if (!txt.includes("SELECT")) {
+                  sq.text = `Khi muốn thống kê tất cả sản phẩm hiện có trong kho và số lượt bán ra của từng sản phẩm (bao gồm cả các sản phẩm mới nhập chưa bán được lượt nào), ta dùng câu truy vấn MySQL dưới đây:\n    SELECT SANPHAM.MaSP, TenSP, COUNT(HOADON.MaSP) AS SoLuotBan\n    FROM SANPHAM \n    INNER JOIN HOADON ON SANPHAM.MaSP = HOADON.MaSP\n    GROUP BY SANPHAM.MaSP, TenSP;`;
+                }
+              }
+            });
+          }
+
+          // 3. QuanLyTrungTamTinHoc (Câu 2 trong BM)
+          if (
+            qText.includes("QuanLyTrungTamTinHoc") ||
+            (qText.includes("HocVien") && qText.includes("LopHoc") && qText.includes("DangKy"))
+          ) {
+            subQs.forEach((sq) => {
+              if (!sq) return;
+              const id = String(sq.id || "").toLowerCase();
+              const txt = String(sq.text || "").trim();
+
+              if (id === "a" || txt.includes("tạo bảng HocViên")) {
+                if (!txt.includes("CREATE TABLE")) {
+                  sq.text = `Với câu lệnh tạo bảng HocViên như sau, thì sẽ yêu cầu bắt buộc phải nhập dữ liệu cho trường MaHV và trường HoTen:\n    CREATE TABLE HocVien (\n        MaHV VARCHAR(10) PRIMARY KEY,\n        HoTen VARCHAR(50) NOT NULL,\n        NgaySinh DATE,\n        GioiTinh VARCHAR(5),\n        SoDienThoai VARCHAR(15)\n    );`;
+                }
+              } else if (id === "b" || txt.includes("hủy 1 lớp học") || txt.includes("toàn vẹn dữ liệu")) {
+                if (!txt.includes("CREATE TABLE")) {
+                  sq.text = `Với câu lệnh tạo bảng dưới đây, nếu 1 học viên muốn hủy 1 lớp học khi thực hiện xóa đăng kí của học viên đó trong bảng DangKy thì thông tin học viên trong bảng HocVien cũng bị xóa theo để đảm bảo tính toàn vẹn dữ liệu:\n    CREATE TABLE DangKy (\n        MaHV VARCHAR(10),\n        MaLop VARCHAR(10),\n        NgayDangKy DATE,\n        DiemSo FLOAT,\n        PRIMARY KEY (MaHV, MaLop),\n        FOREIGN KEY (MaHV) REFERENCES HocVien(MaHV) ON DELETE CASCADE,\n        FOREIGN KEY (MaLop) REFERENCES LopHoc(MaLop)\n    );`;
+                }
+              } else if (id === "c" || txt.includes("học phí cao nhất")) {
+                if (!txt.includes("SELECT")) {
+                  sq.text = `Để tìm thông tin của những lớp học có học phí cao nhất tại trung tâm ta dùng câu truy vấn sau:\n    SELECT * FROM LopHoc \n    WHERE HocPhi = (SELECT MAX(HocPhi) FROM LopHoc);`;
+                }
+              } else if (id === "d" || txt.includes("điểm số trung bình")) {
+                if (!txt.includes("SELECT")) {
+                  sq.text = `Để tính điểm số trung bình của từng học viên (đối với những học viên học nhiều hơn 1 lớp), kết quả gồm: Mã học viên, Họ tên, Điểm trung bình. Ta dùng câu truy vấn sau:\n    SELECT HocVien.MaHV, HoTen, AVG(DiemSo) AS DiemTB\n    FROM HocVien \n    JOIN DangKy ON HocVien.MaHV = DangKy.MaHV\n    GROUP BY HocVien.MaHV, HoTen\n    HAVING COUNT(MaLop) > 1;`;
+                }
+              }
+            });
+          }
+        });
+
+        return exam;
+      }
+      window.ensureExamContentIntegrity = ensureExamContentIntegrity;
+
       function formatQuestionContent(rawText) {
         if (rawText === null || rawText === undefined) return "";
         let normalized = normalizeQuestionTables(rawText);
@@ -991,13 +1143,13 @@
         while ((match = tokenRegex.exec(normalized)) !== null) {
           const beforeText = normalized.slice(lastIndex, match.index).replace(/\n+$/, "");
           if (beforeText) {
-            resultHtml += renderTextWithImages(beforeText, false);
+            resultHtml += formatCodeInText(beforeText);
           }
           try {
             const rows = JSON.parse(match[1]);
             resultHtml += renderTableFromRows(rows);
           } catch (e) {
-            resultHtml += renderTextWithImages(match[1], false);
+            resultHtml += formatCodeInText(match[1]);
           }
           lastIndex = tokenRegex.lastIndex;
         }
@@ -1011,9 +1163,9 @@
               const idx = m.index + m[0].length;
               const partA = remaining.slice(0, idx).replace(/\n+$/, "");
               const partB = remaining.slice(idx).replace(/^\n+/, "");
-              resultHtml += renderTextWithImages(partA, false) + formMockupHtml + renderTextWithImages(partB, false);
+              resultHtml += formatCodeInText(partA) + formMockupHtml + formatCodeInText(partB);
             } else {
-              resultHtml += renderTextWithImages(remaining, false) + formMockupHtml;
+              resultHtml += formatCodeInText(remaining) + formMockupHtml;
             }
           } else if (injectMemberFormMockup) {
             const splitRegex = /(biểu\s+mẫu\s+đăng\s+k[íý]\s+trực\s+tuyến\s+như\s+sau\s*:?)\s*/i;
@@ -1022,12 +1174,12 @@
               const idx = m.index + m[0].length;
               const partA = remaining.slice(0, idx).replace(/\n+$/, "");
               const partB = remaining.slice(idx).replace(/^\n+/, "");
-              resultHtml += renderTextWithImages(partA, false) + memberFormMockupHtml + renderTextWithImages(partB, false);
+              resultHtml += formatCodeInText(partA) + memberFormMockupHtml + formatCodeInText(partB);
             } else {
-              resultHtml += renderTextWithImages(remaining, false) + memberFormMockupHtml;
+              resultHtml += formatCodeInText(remaining) + memberFormMockupHtml;
             }
           } else {
-            resultHtml += renderTextWithImages(remaining, false);
+            resultHtml += formatCodeInText(remaining);
           }
         }
         return resultHtml;
@@ -1540,7 +1692,7 @@
           const docSnap = await window.getDoc(docRef);
           if (docSnap.exists()) {
             state.examId = examId;
-            state.examData = JSON.parse(docSnap.data().data);
+            state.examData = ensureExamContentIntegrity(JSON.parse(docSnap.data().data));
             setScreen('login');
           } else {
             showAlert("Mã bài thi không hợp lệ hoặc không tồn tại!");
@@ -1775,7 +1927,7 @@
           const docSnap = await window.getDoc(docRef);
           if (docSnap.exists()) {
             state.examId = examId;
-            state.examData = JSON.parse(docSnap.data().data);
+            state.examData = ensureExamContentIntegrity(JSON.parse(docSnap.data().data));
             state.student.name = state.user?.displayName || "Giáo viên (Xem trước)";
             state.student.className = "Admin";
             state.answers = { part1: {}, part2: {}, part3: {} };
@@ -2024,7 +2176,7 @@
             newExamData.examType = examType;
 
             // Cập nhật dữ liệu đề thi
-            state.examData = newExamData;
+            state.examData = ensureExamContentIntegrity(newExamData);
 
             // Reset state
             state.answers = { part1: {}, part2: {}, part3: {} };
@@ -2069,6 +2221,7 @@ YÊU CẦU CỰC KỲ QUAN TRỌNG:
 2. Nhận diện đáp án đúng: Đáp án thường được gạch chân (<u>), in đậm (<strong>), tô màu đỏ, hoặc có ký hiệu đặc biệt. Ưu tiên gạch chân cho Phần II.
 3. Nếu không thấy đáp án được đánh dấu, hãy sử dụng kiến thức chuyên môn để giải và đưa ra đáp án chính xác nhất.
 4. Đối với Phần II: Đảm bảo trích xuất đầy đủ tất cả các ý nhỏ (a, b, c, d) cho mỗi câu hỏi lớn. PHẢI trích xuất đủ cả 7 câu của Phần II theo đúng thứ tự xuất hiện (1, 2, 3, 4, 5, 6, 7).
+   - QUAN TRỌNG VỀ ĐOẠN CODE/CÂU LỆNH SQL TRONG PHẦN II: Nếu sau một ý nhỏ (a, b, c, d) có chứa đoạn code (câu lệnh SQL như CREATE TABLE, ALTER TABLE, DELETE FROM, SELECT, UPDATE..., hoặc code Python, C++, HTML...) hoặc các câu văn tiếp theo thuộc về ý đó, bạn BẮT BUỘC phải trích xuất TOÀN BỘ đoạn code/câu lệnh và văn bản đó vào trường 'text' của ý nhỏ tương ứng. TUYỆT ĐỐI KHÔNG ĐƯỢC CẮT BỎ, KHÔNG ĐƯỢC CHỈ LẤY DÒNG TIÊU ĐỀ DẪN!
 5. Giữ nguyên định dạng bảng, hình ảnh, văn bản quan trọng, công thức, thẻ HTML hoặc mã nguồn (code) trong nội dung câu hỏi:
    - QUY TẮC BẢNG: Nếu trong nội dung câu hỏi có ký hiệu đánh dấu bảng dạng [[TABLE_0]], [[TABLE_1]]..., bạn BẮT BUỘC phải giữ nguyên chính xác ký hiệu [[TABLE_0]], [[TABLE_1]]... tại đúng vị trí xuất hiện trong trường "question" (ví dụ: "Câu 25. Chọn một trong hai ngôn ngữ...\n[[TABLE_0]]\nKết quả in ra là:"). TUYỆT ĐỐI KHÔNG xóa ký hiệu [[TABLE_...]] và KHÔNG tự ý gộp nội dung bảng thành văn bản phẳng.
    - QUY TẮC HÌNH ẢNH: Nếu trong nội dung câu hỏi, ý nhỏ (a, b, c, d) hoặc phương án có ký hiệu đánh dấu hình ảnh dạng [[IMG_0]], [[IMG_1]]..., bạn BẮT BUỘC phải giữ nguyên chính xác ký hiệu [[IMG_0]], [[IMG_1]]... tại đúng vị trí xuất hiện (ví dụ: "Câu 17. Cho biểu mẫu sau trên một trang web:\n[[IMG_0]]\nPhương án nào sau đây nêu đúng đoạn mã HTML dùng để thực hiện dòng số 2?"). TUYỆT ĐỐI KHÔNG xóa hoặc bỏ sót bất kỳ ký hiệu [[IMG_...]] nào.
@@ -2086,79 +2239,21 @@ Nội dung HTML cần phân tích:
 ${processedHtml}${tableRefNotes}`;
 
         try {
-          if (!ai) {
-            console.warn("AI is not initialized (missing API Key). Falling back to manual parser.");
-            showAlert("Chưa cấu hình API Key trên Vercel. Đang sử dụng bộ phân tích cơ bản (có thể không chính xác bằng AI).");
-            return restoreTablesInExamData(parseExamHTML(processedHtml), extractedTables, extractedImages);
-          }
-
-          const response = await ai.models.generateContent({
-            model: "gemini-3.8-flash",
-            contents: prompt,
-            config: {
-              responseMimeType: "application/json",
-              responseSchema: {
-                type: Type.OBJECT,
-                properties: {
-                  part1: {
-                    type: Type.ARRAY,
-                    items: {
-                      type: Type.OBJECT,
-                      properties: {
-                        id: { type: Type.NUMBER },
-                        question: { type: Type.STRING },
-                        options: { type: Type.ARRAY, items: { type: Type.STRING } },
-                        answer: { type: Type.NUMBER },
-                        explanation: { type: Type.STRING, description: "Detailed explanation if present in the text" }
-                      },
-                      required: ["id", "question", "options", "answer"]
-                    }
-                  },
-                  part2: {
-                    type: Type.ARRAY,
-                    items: {
-                      type: Type.OBJECT,
-                      properties: {
-                        id: { type: Type.NUMBER },
-                        question: { type: Type.STRING },
-                        explanation: { type: Type.STRING, description: "Detailed explanation if present for the overall question" },
-                        subQuestions: { 
-                          type: Type.ARRAY, 
-                          items: { 
-                            type: Type.OBJECT,
-                            properties: {
-                              id: { type: Type.STRING },
-                              text: { type: Type.STRING },
-                              answer: { type: Type.BOOLEAN, description: "True if the sub-question is underlined in HTML, False otherwise." },
-                              explanation: { type: Type.STRING, description: "Detailed explanation for this specific sub-question if present" }
-                            },
-                            required: ["id", "text", "answer"]
-                          } 
-                        }
-                      },
-                      required: ["id", "question", "subQuestions"]
-                    }
-                  },
-                  part3: {
-                    type: Type.ARRAY,
-                    items: {
-                      type: Type.OBJECT,
-                      properties: {
-                        id: { type: Type.NUMBER },
-                        question: { type: Type.STRING },
-                        answer: { type: Type.STRING },
-                        explanation: { type: Type.STRING, description: "Detailed explanation if present in the text" }
-                      },
-                      required: ["id", "question", "answer"]
-                    }
-                  }
-                },
-                required: ["part1", "part2", "part3"]
-              }
-            }
+          const res = await fetch("/api/gemini/parse-exam", {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify({ prompt }),
           });
 
-          const parsedData = JSON.parse(response.text);
+          if (!res.ok) {
+            const errData = await res.json().catch(() => ({}));
+            throw new Error(errData.error || `Server responded with status ${res.status}`);
+          }
+
+          const data = await res.json();
+          const parsedData = JSON.parse(data.text);
           
           // Ensure all parts exist as arrays
           if (!parsedData.part1) parsedData.part1 = [];
@@ -2436,6 +2531,11 @@ ${processedHtml}${tableRefNotes}`;
                 });
               } else if (currentQuestion.subQuestions.length === 0) {
                 currentQuestion.question += "\n" + text;
+              } else {
+                const lastSub = currentQuestion.subQuestions[currentQuestion.subQuestions.length - 1];
+                if (lastSub) {
+                  lastSub.text += "\n" + text;
+                }
               }
             } else if (currentPart === 3) {
               if (
@@ -2736,7 +2836,7 @@ ${processedHtml}${tableRefNotes}`;
                           <div class="px-3 sm:px-4 py-1.5 rounded-lg border border-gray-200 text-sm font-medium text-gray-600 peer-checked:bg-[#283553] peer-checked:text-white peer-checked:border-[#283553] transition-colors bg-white hover:bg-gray-50">Sai</div>
                       </label>
                   </div>
-                  <div class="text-gray-800 text-sm leading-relaxed pt-1.5 whitespace-pre-wrap">${formatQuestionContent(sqText)}</div>
+                  <div class="text-gray-800 text-sm leading-relaxed pt-1.5 whitespace-pre-wrap min-w-0 flex-1">${formatQuestionContent(sqText)}</div>
               </div>
           `;
         });
@@ -2753,6 +2853,7 @@ ${processedHtml}${tableRefNotes}`;
                     </div>
                   </div>`;
         }
+        ensureExamContentIntegrity(state.examData);
 
         let html = `
                 <div class="min-h-screen bg-gray-50 pb-24">
@@ -3280,7 +3381,7 @@ ${processedHtml}${tableRefNotes}`;
             const docRef = window.doc(window.db, "exams", examId);
             const docSnap = await window.getDoc(docRef);
             if (docSnap.exists()) {
-              state.examData = JSON.parse(docSnap.data().data);
+              state.examData = ensureExamContentIntegrity(JSON.parse(docSnap.data().data));
               setScreen('login');
             } else {
               showAlert("Không tìm thấy bài thi!");
