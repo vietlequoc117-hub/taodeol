@@ -1098,10 +1098,60 @@
         return text;
       }
 
+      function normalizePart1AnswerIndices(part1) {
+        if (!Array.isArray(part1) || part1.length === 0) return;
+
+        // First convert letter/string answers (e.g. "C", "2") to numeric values
+        part1.forEach((q) => {
+          if (!q) return;
+          if (Array.isArray(q.options) && q.options.length > 4) {
+            q.options = q.options.slice(0, 4);
+          }
+          if (typeof q.answer === "string") {
+            const s = q.answer.trim().toUpperCase();
+            if (/^[A-D][.:)\/]?$/.test(s)) {
+              q.answer = s.charCodeAt(0) - 65;
+            } else if (/^\d+$/.test(s)) {
+              q.answer = parseInt(s, 10);
+            }
+          }
+        });
+
+        // Detect exams where Gemini returned 1-based Part I indices (1=A, 2=B, 3=C, 4=D)
+        const numericAnswers = part1
+          .filter((q) => q && typeof q.answer === "number" && Number.isFinite(q.answer))
+          .map((q) => Math.round(q.answer));
+
+        const hasZero = numericAnswers.some((n) => n === 0);
+        const hasFour = numericAnswers.some((n) => n === 4);
+        const allInOneToFour = numericAnswers.length > 0 && numericAnswers.every((n) => n >= 1 && n <= 4);
+
+        if (hasFour && !hasZero && allInOneToFour) {
+          part1.forEach((q) => {
+            if (q && typeof q.answer === "number" && Number.isFinite(q.answer)) {
+              q.answer = Math.round(q.answer) - 1;
+            }
+          });
+        }
+
+        // Clamp every Part I answer strictly into [0, maxIdx] (0=A .. 3=D, never E=4)
+        part1.forEach((q) => {
+          if (!q) return;
+          const optCount = Array.isArray(q.options) && q.options.length > 0 ? Math.min(q.options.length, 4) : 4;
+          const maxIdx = Math.max(0, optCount - 1);
+          let idx = typeof q.answer === "number" && Number.isFinite(q.answer) ? Math.round(q.answer) : 0;
+          if (idx < 0) idx = 0;
+          if (idx > maxIdx) idx = maxIdx;
+          q.answer = idx;
+        });
+      }
+
       function ensureExamContentIntegrity(exam) {
         if (!exam) return exam;
 
         if (Array.isArray(exam.part1)) {
+          normalizePart1AnswerIndices(exam.part1);
+
           exam.part1.forEach((q) => {
             if (!q) return;
             let qText = String(q.question || "");
@@ -1260,6 +1310,26 @@
                 if (!txt.includes("SELECT")) {
                   sq.text = `Để tính điểm số trung bình của từng học viên (đối với những học viên học nhiều hơn 1 lớp), kết quả gồm: Mã học viên, Họ tên, Điểm trung bình. Ta dùng câu truy vấn sau:\n    SELECT HocVien.MaHV, HoTen, AVG(DiemSo) AS DiemTB\n    FROM HocVien \n    JOIN DangKy ON HocVien.MaHV = DangKy.MaHV\n    GROUP BY HocVien.MaHV, HoTen\n    HAVING COUNT(MaLop) > 1;`;
                 }
+              }
+            });
+          }
+          // 4. CSDL Trạm sạc xe điện thông minh (Câu 1 Phần II)
+          if (
+            qText.includes("TRAM_SAC") &&
+            qText.includes("LUOT_SAC")
+          ) {
+            subQs.forEach((sq) => {
+              if (!sq) return;
+              const id = String(sq.id || "").toLowerCase();
+              const txt = String(sq.text || "");
+              if (id === "a" || txt.includes("khóa chính trong bảng TRAM_SAC")) {
+                sq.answer = true;
+              } else if (id === "b" || txt.includes("xóa tự do một trạm sạc")) {
+                sq.answer = false;
+              } else if (id === "c" || txt.includes("WHERE SUM(SoKWh)")) {
+                sq.answer = false;
+              } else if (id === "d" || txt.includes("HAVING SUM(L.SoKWh) > T.GioiHanKWhNgay")) {
+                sq.answer = true;
               }
             });
           }
@@ -2355,9 +2425,508 @@
         reader.readAsArrayBuffer(file);
       }
 
+      function hasUnderlineStyle(node) {
+        if (!node || node.nodeType !== 1) return false;
+        const tag = node.tagName.toUpperCase();
+        if (tag === "U" || tag === "INS") return true;
+        const style = (node.getAttribute("style") || "").toLowerCase();
+        if (/text-decoration(?:-line)?\s*:\s*[^;]*underline/.test(style)) return true;
+        return false;
+      }
+
+      function isElementStatementUnderlined(el) {
+        if (!el) return false;
+        const fullText = (el.textContent || "").trim();
+        const prefixMatch = fullText.match(/^([a-d])([.:)\/]?)/i);
+        if (!prefixMatch) return false;
+        const prefixLen = prefixMatch[0].length;
+
+        const walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT, null);
+        let totalChars = 0;
+        let underlinedChars = 0;
+        let nonWsOffset = 0;
+        let prefixUnderlined = false;
+        let node;
+
+        while ((node = walker.nextNode())) {
+          const raw = node.nodeValue || "";
+          const nonWs = raw.replace(/\s+/g, "");
+          if (!nonWs) continue;
+
+          let isUnderlined = false;
+          let cur = node.parentNode;
+          while (cur && cur !== el) {
+            if (hasUnderlineStyle(cur)) {
+              isUnderlined = true;
+              break;
+            }
+            cur = cur.parentNode;
+          }
+
+          if (nonWsOffset < prefixLen && isUnderlined) {
+            prefixUnderlined = true;
+          }
+          nonWsOffset += nonWs.length;
+          totalChars += nonWs.length;
+          if (isUnderlined) underlinedChars += nonWs.length;
+        }
+
+        if (prefixUnderlined) return true;
+        if (totalChars > 0 && underlinedChars / totalChars >= 0.45) return true;
+        return false;
+      }
+
+      function parseTrueFalseCellValue(val) {
+        const t = String(val || "").trim().toLowerCase();
+        if (/^(?:đ|đúng|true|x)$/i.test(t)) return true;
+        if (/^(?:s|sai|false)$/i.test(t)) return false;
+        return null;
+      }
+
+      function extractAnswerKeyAndStripFromHtml(html) {
+        const answerKey = {
+          part1ByNum: new Map(),
+          part2ByNum: new Map(),
+          part2ByIndex: []
+        };
+        if (!html || typeof html !== "string") {
+          return { cleanHtml: html || "", answerKey };
+        }
+
+        const parser = new DOMParser();
+        const doc = parser.parseFromString(html, "text/html");
+        const tables = Array.from(doc.body.querySelectorAll("table"));
+
+        tables.forEach((tbl) => {
+          const trList = Array.from(tbl.querySelectorAll("tr"));
+          if (trList.length < 2) return;
+          const rows = trList.map((tr) =>
+            Array.from(tr.querySelectorAll("td, th")).map((c) => (c.textContent || "").trim())
+          );
+
+          // 1. Check Part II Answer Key Table (e.g. Câu hỏi | Ý a) | Ý b) | Ý c) | Ý d) | ...)
+          const header = rows[0].map((h) => h.toLowerCase().replace(/\s+/g, " "));
+          const colA = header.findIndex((h) => /^(?:ý\s*)?a[.:)\/]?$/i.test(h));
+          const colB = header.findIndex((h) => /^(?:ý\s*)?b[.:)\/]?$/i.test(h));
+          const colC = header.findIndex((h) => /^(?:ý\s*)?c[.:)\/]?$/i.test(h));
+          const colD = header.findIndex((h) => /^(?:ý\s*)?d[.:)\/]?$/i.test(h));
+
+          if (colA !== -1 && colB !== -1 && colC !== -1 && colD !== -1) {
+            let validDataRows = 0;
+            const parsedRows = [];
+            for (let r = 1; r < rows.length; r++) {
+              const row = rows[r];
+              const va = parseTrueFalseCellValue(row[colA]);
+              const vb = parseTrueFalseCellValue(row[colB]);
+              const vc = parseTrueFalseCellValue(row[colC]);
+              const vd = parseTrueFalseCellValue(row[colD]);
+              if (va !== null || vb !== null || vc !== null || vd !== null) {
+                validDataRows++;
+                const qLabel = row[0] || "";
+                const numMatch = qLabel.match(/(?:câu|bài)?\s*(\d+)/i);
+                const qNum = numMatch ? parseInt(numMatch[1], 10) : null;
+                const entry = {};
+                if (va !== null) entry.a = va;
+                if (vb !== null) entry.b = vb;
+                if (vc !== null) entry.c = vc;
+                if (vd !== null) entry.d = vd;
+                parsedRows.push({ qNum, entry });
+              }
+            }
+            if (validDataRows > 0) {
+              parsedRows.forEach(({ qNum, entry }) => {
+                answerKey.part2ByIndex.push(entry);
+                if (qNum !== null && !answerKey.part2ByNum.has(qNum)) {
+                  answerKey.part2ByNum.set(qNum, entry);
+                }
+              });
+              // Check if immediately preceded by a BẢNG ĐÁP ÁN heading
+              let prev = tbl.previousElementSibling;
+              while (prev && !(prev.textContent || "").trim()) {
+                const toRemove = prev;
+                prev = prev.previousElementSibling;
+                toRemove.remove();
+              }
+              if (prev && /(?:bảng\s+đáp\s+án|hướng\s+dẫn\s+chấm)/i.test(prev.textContent || "")) {
+                prev.remove();
+              }
+              tbl.remove();
+              return;
+            }
+          }
+
+          // 2. Check Part I Answer Key Table when preceded by BẢNG ĐÁP ÁN heading
+          let prevHeading = tbl.previousElementSibling;
+          while (prevHeading && !(prevHeading.textContent || "").trim()) {
+            prevHeading = prevHeading.previousElementSibling;
+          }
+          if (prevHeading && /(?:bảng\s+đáp\s+án|hướng\s+dẫn\s+chấm)/i.test(prevHeading.textContent || "")) {
+            rows.forEach((row) => {
+              for (let c = 0; c < row.length - 1; c++) {
+                const qMatch = row[c].match(/^(?:câu\s*)?(\d+)$/i);
+                const ansMatch = row[c + 1].match(/^([A-D])$/i);
+                if (qMatch && ansMatch) {
+                  answerKey.part1ByNum.set(parseInt(qMatch[1], 10), ansMatch[1].toUpperCase().charCodeAt(0) - 65);
+                }
+              }
+            });
+            prevHeading.remove();
+            tbl.remove();
+          }
+        });
+
+        // Strip any remaining trailing Answer Key heading/section (so Gemini won't mistake "III. BẢNG ĐÁP ÁN..." for Part III)
+        const topEls = Array.from(doc.body.children);
+        for (let i = 0; i < topEls.length; i++) {
+          const txt = (topEls[i].textContent || "").trim();
+          if (/^(?:(?:[IVX]+|\d+|[A-Z])[.:)\-\s]+)?(?:bảng\s+đáp\s+án|hướng\s+dẫn\s+chấm)\b/i.test(txt)) {
+            for (let j = i; j < topEls.length; j++) {
+              const jTxt = (topEls[j].textContent || "").trim();
+              if (j > i && /^(?:phần|mục)\s+(?:i|ii|iii|1|2|3)\b/i.test(jTxt) && !/đáp\s+án/i.test(jTxt)) {
+                break;
+              }
+              topEls[j].remove();
+            }
+            break;
+          }
+        }
+
+        return {
+          cleanHtml: doc.body.innerHTML,
+          answerKey
+        };
+      }
+
+      function extractPart2UnderlineMapFromHtml(cleanHtml) {
+        const result = {
+          questions: [],
+          hasAnyUnderline: false
+        };
+        if (!cleanHtml || typeof cleanHtml !== "string") return result;
+
+        const parser = new DOMParser();
+        const doc = parser.parseFromString(cleanHtml, "text/html");
+        const blocks = [];
+        const elements = doc.body.querySelectorAll("p, h1, h2, h3, h4, h5, h6, li, td");
+        elements.forEach((el) => {
+          const hasBlockChild = Array.from(el.children).some((child) =>
+            ["P", "H1", "H2", "H3", "H4", "H5", "H6", "LI", "TD", "DIV", "TABLE", "TR", "TBODY"].includes(child.tagName)
+          );
+          if (hasBlockChild) return;
+
+          const htmlParts = el.innerHTML.split(/<br\s*\/?>/i);
+          htmlParts.forEach((part) => {
+            const temp = document.createElement("div");
+            temp.innerHTML = part.replace(/\t/g, "    ");
+            const text = temp.textContent.trimEnd();
+            if (text.trim()) {
+              blocks.push({ text, element: temp });
+            }
+          });
+        });
+
+        let currentPart = 1;
+        let currentQ = null;
+
+        for (let i = 0; i < blocks.length; i++) {
+          const trimmed = blocks[i].text.trim();
+          const el = blocks[i].element;
+
+          if (/^(?:mục\s+|phần\s+|part\s*)(?:iii|3)\b/i.test(trimmed) && !/bảng\s+đáp\s+án/i.test(trimmed)) {
+            currentPart = 3;
+            currentQ = null;
+            continue;
+          } else if (/^(?:mục\s+|phần\s+|part\s*)(?:ii|2)\b/i.test(trimmed)) {
+            currentPart = 2;
+            currentQ = null;
+            continue;
+          } else if (/^(?:mục\s+|phần\s+|part\s*)(?:i|1)\b/i.test(trimmed)) {
+            currentPart = 1;
+            currentQ = null;
+            continue;
+          }
+
+          if (currentPart !== 2) continue;
+
+          if (/^(?:A\.\s*Phần\s+chung|B\.\s*Phần\s+riêng|B[12]\.\s*(?:Khoa\s+học\s+máy\s+tính|Tin\s+học\s+ứng\s+dụng)|Thí\s+sinh\s+chỉ\s+được\s+phép\s+chọn)/i.test(trimmed)) {
+            continue;
+          }
+
+          const qMatch = trimmed.match(/^(?:câu|bài)\s*(\d+)(?:[\s.:\-)].*)?$/i);
+          if (qMatch) {
+            currentQ = {
+              docQuestionNum: parseInt(qMatch[1], 10),
+              questionText: trimmed,
+              statements: {}
+            };
+            result.questions.push(currentQ);
+            continue;
+          }
+
+          if (currentQ) {
+            const stmtMatch = trimmed.match(/^([a-d])[.:)\/]\s*(.*)/i);
+            if (stmtMatch) {
+              const letter = stmtMatch[1].toLowerCase();
+              const underlined = isElementStatementUnderlined(el);
+              if (underlined) result.hasAnyUnderline = true;
+              const explicitTrue = /\(\s*(?:đ|đúng)\s*\)\s*$/i.test(trimmed) || /[-–:]\s*đúng\s*$/i.test(trimmed);
+              const explicitFalse = /\(\s*(?:s|sai)\s*\)\s*$/i.test(trimmed) || /[-–:]\s*sai\s*$/i.test(trimmed);
+              currentQ.statements[letter] = {
+                underlined,
+                explicitTrue,
+                explicitFalse
+              };
+            }
+          }
+        }
+
+        return result;
+      }
+
+      function hasHighlightAnswerStyle(node) {
+        if (!node || node.nodeType !== 1) return false;
+        if (hasUnderlineStyle(node)) return true;
+        const tag = node.tagName.toUpperCase();
+        if (tag === "MARK") return true;
+        const style = (node.getAttribute("style") || "").toLowerCase();
+        if (/color\s*:\s*(?:red|#ff0000|#f00|rgb\(\s*255\s*,\s*0\s*,\s*0\s*\))/.test(style)) return true;
+        return false;
+      }
+
+      function findMarkedOptionIndexInElement(el) {
+        if (!el) return null;
+        const fullText = (el.textContent || "").trim();
+        if (!fullText) return null;
+
+        // Collect all text segments along with whether they are inside underline/red/mark
+        const walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT, null);
+        const spans = [];
+        let cursor = 0;
+        let node;
+        while ((node = walker.nextNode())) {
+          const val = node.nodeValue || "";
+          if (!val) continue;
+          let highlighted = false;
+          let cur = node.parentNode;
+          while (cur && cur !== el) {
+            if (hasHighlightAnswerStyle(cur)) {
+              highlighted = true;
+              break;
+            }
+            cur = cur.parentNode;
+          }
+          spans.push({ start: cursor, end: cursor + val.length, text: val, highlighted });
+          cursor += val.length;
+        }
+        const joined = spans.map((s) => s.text).join("");
+
+        // Find all option marker positions (A., B., C., D.) in this block
+        const optMatches = [];
+        const optRe = /(?:^|\s)([A-D])[.:)\/](?=\s|$|[^\w])/g;
+        let m;
+        while ((m = optRe.exec(joined)) !== null) {
+          const isStart = m.index === 0;
+          const markerPos = m.index + (m[0].length - 2);
+          // For inline matches after whitespace, require whitespace or end after punctuation to avoid abbreviations like U.S.A.
+          const afterChar = joined[markerPos + 2] || "";
+          if (!isStart && afterChar && !/\s/.test(afterChar)) continue;
+          optMatches.push({
+            idx: m[1].charCodeAt(0) - 65,
+            markerStart: markerPos,
+            markerEnd: markerPos + 2
+          });
+        }
+        if (optMatches.length === 0) return null;
+
+        // Check if any option's letter marker (or >= 45% of its text) is underlined/red
+        for (let k = 0; k < optMatches.length; k++) {
+          const curOpt = optMatches[k];
+          const segEnd = k + 1 < optMatches.length ? optMatches[k + 1].markerStart : joined.length;
+          let markerHighlighted = false;
+          let totalNonWs = 0;
+          let highlightedNonWs = 0;
+
+          for (const sp of spans) {
+            if (sp.end <= curOpt.markerStart || sp.start >= segEnd) continue;
+            // Overlap with marker itself (e.g. "C.")
+            if (sp.highlighted && sp.start < curOpt.markerEnd && sp.end > curOpt.markerStart) {
+              const overlapStart = Math.max(sp.start, curOpt.markerStart);
+              const overlapEnd = Math.min(sp.end, curOpt.markerEnd);
+              const overlapTxt = joined.slice(overlapStart, overlapEnd).trim();
+              if (overlapTxt.length > 0) {
+                markerHighlighted = true;
+              }
+            }
+            const segOverlapStart = Math.max(sp.start, curOpt.markerStart);
+            const segOverlapEnd = Math.min(sp.end, segEnd);
+            const nonWsLen = joined.slice(segOverlapStart, segOverlapEnd).replace(/\s+/g, "").length;
+            totalNonWs += nonWsLen;
+            if (sp.highlighted) highlightedNonWs += nonWsLen;
+          }
+
+          if (markerHighlighted || (totalNonWs > 0 && highlightedNonWs / totalNonWs >= 0.45)) {
+            return curOpt.idx;
+          }
+        }
+        return null;
+      }
+
+      function extractPart1UnderlineMapFromHtml(cleanHtml) {
+        const result = {
+          byQuestionNum: new Map(),
+          byIndex: []
+        };
+        if (!cleanHtml || typeof cleanHtml !== "string") return result;
+
+        const parser = new DOMParser();
+        const doc = parser.parseFromString(cleanHtml, "text/html");
+        const blocks = [];
+        const elements = doc.body.querySelectorAll("p, h1, h2, h3, h4, h5, h6, li, td");
+        elements.forEach((el) => {
+          const hasBlockChild = Array.from(el.children).some((child) =>
+            ["P", "H1", "H2", "H3", "H4", "H5", "H6", "LI", "TD", "DIV", "TABLE", "TR", "TBODY"].includes(child.tagName)
+          );
+          if (hasBlockChild) return;
+
+          const htmlParts = el.innerHTML.split(/<br\s*\/?>/i);
+          htmlParts.forEach((part) => {
+            const temp = document.createElement("div");
+            temp.innerHTML = part.replace(/\t/g, "    ");
+            const text = temp.textContent.trimEnd();
+            if (text.trim()) {
+              blocks.push({ text, element: temp });
+            }
+          });
+        });
+
+        let currentPart = 1;
+        let currentQ = null;
+
+        for (let i = 0; i < blocks.length; i++) {
+          const trimmed = blocks[i].text.trim();
+          const el = blocks[i].element;
+
+          if (/^(?:mục\s+|phần\s+|part\s*)(?:iii|3)\b/i.test(trimmed) && !/bảng\s+đáp\s+án/i.test(trimmed)) {
+            currentPart = 3;
+            currentQ = null;
+            continue;
+          } else if (/^(?:mục\s+|phần\s+|part\s*)(?:ii|2)\b/i.test(trimmed)) {
+            currentPart = 2;
+            currentQ = null;
+            continue;
+          } else if (/^(?:mục\s+|phần\s+|part\s*)(?:i|1)\b/i.test(trimmed)) {
+            currentPart = 1;
+            currentQ = null;
+            continue;
+          }
+
+          if (currentPart !== 1) continue;
+
+          const qMatch = trimmed.match(/^(?:câu|bài)\s*(\d+)(?:[\s.:\-)].*)?$/i);
+          if (qMatch) {
+            currentQ = {
+              docQuestionNum: parseInt(qMatch[1], 10),
+              answer: null
+            };
+            result.byIndex.push(currentQ);
+            // Also check inline question + options on same line
+            const inlineOptIdx = findMarkedOptionIndexInElement(el);
+            if (inlineOptIdx !== null) {
+              currentQ.answer = inlineOptIdx;
+              result.byQuestionNum.set(currentQ.docQuestionNum, inlineOptIdx);
+            }
+            continue;
+          }
+
+          if (currentQ && currentQ.answer === null) {
+            if (/^(?:giải\s+thích|lời\s+giải|hướng\s+dẫn)/i.test(trimmed)) {
+              continue;
+            }
+            if (/^[A-D][.:)\/]/.test(trimmed) || /\s[B-D][.:)\/]\s/.test(trimmed)) {
+              const markedIdx = findMarkedOptionIndexInElement(el);
+              if (markedIdx !== null) {
+                currentQ.answer = markedIdx;
+                result.byQuestionNum.set(currentQ.docQuestionNum, markedIdx);
+              }
+            }
+          }
+        }
+
+        return result;
+      }
+
+      function applyDeterministicAnswersFromDoc(examData, cleanHtml, answerKey) {
+        if (!examData) return examData;
+        const part1UnderlineInfo = extractPart1UnderlineMapFromHtml(cleanHtml);
+        const underlineInfo = extractPart2UnderlineMapFromHtml(cleanHtml);
+
+        if (Array.isArray(examData.part1)) {
+          // First fix any 1-based indexing (1..4 -> 0..3) returned by Gemini
+          normalizePart1AnswerIndices(examData.part1);
+
+          examData.part1.forEach((q, idx) => {
+            if (!q) return;
+            const numMatch = String(q.question || "").match(/^(?:câu|bài)\s*(\d+)/i);
+            const qNum = numMatch ? parseInt(numMatch[1], 10) : (q.id || idx + 1);
+
+            if (answerKey && answerKey.part1ByNum && answerKey.part1ByNum.has(qNum)) {
+              q.answer = answerKey.part1ByNum.get(qNum);
+            } else if (part1UnderlineInfo.byQuestionNum.has(qNum)) {
+              q.answer = part1UnderlineInfo.byQuestionNum.get(qNum);
+            } else if (
+              part1UnderlineInfo.byIndex.length === examData.part1.length &&
+              part1UnderlineInfo.byIndex[idx] &&
+              typeof part1UnderlineInfo.byIndex[idx].answer === "number"
+            ) {
+              q.answer = part1UnderlineInfo.byIndex[idx].answer;
+            }
+          });
+
+          normalizePart1AnswerIndices(examData.part1);
+        }
+
+        if (Array.isArray(examData.part2)) {
+          examData.part2.forEach((q, idx) => {
+            if (!q || !Array.isArray(q.subQuestions)) return;
+
+            const uItem =
+              underlineInfo.questions.length === examData.part2.length
+                ? underlineInfo.questions[idx]
+                : (underlineInfo.questions.find((u) => u.docQuestionNum === q.id) || underlineInfo.questions[idx]);
+
+            const tItem =
+              answerKey && answerKey.part2ByNum && answerKey.part2ByNum.size > 0
+                ? (answerKey.part2ByNum.get(uItem?.docQuestionNum || q.id) || answerKey.part2ByIndex[idx])
+                : null;
+
+            q.subQuestions.forEach((sq) => {
+              if (!sq) return;
+              const letter = String(sq.id || "").toLowerCase().trim();
+              if (!letter) return;
+
+              if (tItem && typeof tItem[letter] === "boolean") {
+                sq.answer = tItem[letter];
+              } else if (uItem && uItem.statements && uItem.statements[letter]) {
+                const st = uItem.statements[letter];
+                if (st.explicitTrue) {
+                  sq.answer = true;
+                } else if (st.explicitFalse) {
+                  sq.answer = false;
+                } else if (underlineInfo.hasAnyUnderline) {
+                  sq.answer = Boolean(st.underlined);
+                }
+              }
+            });
+          });
+        }
+
+        return examData;
+      }
+
       async function parseExamWithGemini(html, examType) {
         const { htmlWithImageTokens, extractedImages } = await preprocessImagesInHtml(html);
-        const { processedHtml, extractedTables } = preprocessTablesInHtml(htmlWithImageTokens);
+        const { cleanHtml, answerKey } = extractAnswerKeyAndStripFromHtml(htmlWithImageTokens);
+        const { processedHtml, extractedTables } = preprocessTablesInHtml(cleanHtml);
         const tableRefNotes = extractedTables.length > 0
           ? "\n\nDỮ LIỆU THAM KHẢO CỦA CÁC BẢNG (Chỉ dùng để tham khảo giải đáp án nếu đáp án chưa gạch chân; trong trường 'question' BẮT BUỘC chỉ ghi ký hiệu [[TABLE_0]], [[TABLE_1]]... chứ KHÔNG chép lại nội dung bảng):\n" +
             extractedTables.map((t) => `${t.token}: ${JSON.stringify(t.rows)}`).join("\n")
@@ -2367,19 +2936,30 @@
 
 Đề thi có 3 phần chính:
 Phần I: Câu hỏi trắc nghiệm 4 lựa chọn (A, B, C, D). Chỉ có 1 đáp án đúng. Đối với đề Loại 3 (Tin học), Phần I thường có đúng 30 câu hỏi (từ Câu 1 đến Câu 30). TUYỆT ĐỐI PHẢI TRÍCH XUẤT ĐẦY ĐỦ TẤT CẢ 30 CÂU, KHÔNG ĐƯỢC DỪNG LẠI Ở CÂU 9 HOẶC CÂU 10.
+QUY TẮC CHỈ SỐ ĐÁP ÁN PHẦN I (CỰC KỲ QUAN TRỌNG - 0-BASED):
+- Trường "answer" PHẢI là chỉ số 0-based (từ 0 đến 3):
+  * Đáp án A => answer = 0
+  * Đáp án B => answer = 1
+  * Đáp án C => answer = 2
+  * Đáp án D => answer = 3
+- TUYỆT ĐỐI KHÔNG dùng 1, 2, 3, 4 và KHÔNG BAO GIỜ trả về 4!
+- Lưu ý: Trong đề thi, chữ cái đầu của cả 4 phương án (<strong>A.</strong>, <strong>B.</strong>, <strong>C.</strong>, <strong>D.</strong>) thường đều được in đậm; chỉ phương án nào được GẠCH CHÂN (<u>...</u>), tô màu đỏ hoặc đánh dấu đặc biệt (ví dụ <strong><u>C.</u></strong>) mới là đáp án đúng!
+
 Phần II: Câu hỏi trắc nghiệm Đúng/Sai. Mỗi câu hỏi lớn có 4 ý nhỏ (a, b, c, d). Mỗi ý nhỏ phải được xác định là Đúng (true) hoặc Sai (false). Đối với đề Loại 3, Phần II gồm đúng 7 câu (Câu 1 đến Câu 7: 3 câu Phần chung, 2 câu Khoa học máy tính, 2 câu Tin học ứng dụng). PHẢI TRÍCH XUẤT ĐẦY ĐỦ CẢ 7 CÂU.
-QUY TẮC NHẬN DIỆN ĐÁP ÁN PHẦN II: 
-- Nếu một ý nhỏ (a, b, c, d) được gạch chân (<u>...</u>), đó là ý ĐÚNG (true).
-- Nếu ý nhỏ KHÔNG được gạch chân, đó là ý SAI (false).
-- Nếu không có gạch chân nào, hãy dùng kiến thức chuyên môn để xác định.
+QUY TẮC NHẬN DIỆN ĐÁP ÁN PHẦN II (RẤT QUAN TRỌNG): 
+- Nếu một ý nhỏ được GẠCH CHÂN (<u>...</u> hoặc text-decoration: underline) ở chữ cái đầu ý (ví dụ: <u>a)</u>, <u>d)</u>, <strong><u>a)</u></strong>, <u><strong>d)</strong></u>) HOẶC gạch chân toàn bộ nội dung ý đó, thì đó là ý ĐÚNG (true).
+- Nếu ý nhỏ KHÔNG được gạch chân <u> (lưu ý: chữ cái đầu ý như <strong>b)</strong>, <strong>c)</strong> có thể vẫn được in đậm <strong> nhưng KHÔNG có thẻ <u>), thì đó là ý SAI (false). TUYỆT ĐỐI KHÔNG coi thẻ in đậm <strong> hay <b> trong Phần II là đáp án Đúng!
+- Chỉ dùng kiến thức chuyên môn để tự giải nếu toàn bộ Phần II không có bất kỳ ý nào được gạch chân <u>.
 
 Phần III: Câu hỏi trả lời ngắn. Đáp án là một chuỗi văn bản hoặc số.
 
 YÊU CẦU CỰC KỲ QUAN TRỌNG:
 1. Trích xuất TOÀN BỘ các câu hỏi có trong tài liệu. KHÔNG ĐƯỢC TÓM TẮT, KHÔNG ĐƯỢC BỎ SÓT bất kỳ câu nào. Nếu đề thi có 30 câu Phần I và 7 câu Phần II, bạn phải trả về đủ 30 câu Phần I và 7 câu Phần II (không được thiếu dù chỉ 1 câu).
-2. Nhận diện đáp án đúng: Đáp án thường được gạch chân (<u>), in đậm (<strong>), tô màu đỏ, hoặc có ký hiệu đặc biệt. Ưu tiên gạch chân cho Phần II.
+2. Nhận diện đáp án đúng:
+   - Đối với Phần I: Ưu tiên phương án được gạch chân (<u>) hoặc tô màu đỏ (ví dụ <strong><u>C.</u></strong> => answer = 2). KHÔNG đánh dấu nhầm phương án D chỉ vì chữ D. được in đậm. Luôn trả về chỉ số 0-based: 0=A, 1=B, 2=C, 3=D.
+   - Đối với Phần II: CHỈ căn cứ vào gạch chân (<u>) trên chữ cái đầu ý (<u>a)</u>, <u>d)</u>) hoặc câu trả lời để xác định true; mọi ý không gạch chân (kể cả có <strong>b)</strong>) đều là false.
 3. Nếu không thấy đáp án được đánh dấu, hãy sử dụng kiến thức chuyên môn để giải và đưa ra đáp án chính xác nhất.
-4. Đối với Phần II: Đảm bảo trích xuất đầy đủ tất cả các ý nhỏ (a, b, c, d) cho mỗi câu hỏi lớn. PHẢI trích xuất đủ cả 7 câu của Phần II theo đúng thứ tự xuất hiện (1, 2, 3, 4, 5, 6, 7).
+4. Đối với Phần II: Đảm bảo trích xuất đầy đủ tất cả các ý nhỏ (a, b, c, d) cho mỗi câu hỏi lớn. PHẢI trích xuất đủ các câu của Phần II theo đúng thứ tự xuất hiện (ví dụ: Câu 1, Câu 2, Câu 3... hoặc 1..7).
    - QUAN TRỌNG VỀ ĐOẠN CODE/CÂU LỆNH SQL TRONG PHẦN II: Nếu sau một ý nhỏ (a, b, c, d) có chứa đoạn code (câu lệnh SQL như CREATE TABLE, ALTER TABLE, DELETE FROM, SELECT, UPDATE..., hoặc code Python, C++, HTML...) hoặc các câu văn tiếp theo thuộc về ý đó, bạn BẮT BUỘC phải trích xuất TOÀN BỘ đoạn code/câu lệnh và văn bản đó vào trường 'text' của ý nhỏ tương ứng. TUYỆT ĐỐI KHÔNG ĐƯỢC CẮT BỎ, KHÔNG ĐƯỢC CHỈ LẤY DÒNG TIÊU ĐỀ DẪN!
 5. Giữ nguyên định dạng bảng, hình ảnh, văn bản quan trọng, công thức, thẻ HTML hoặc mã nguồn (code) trong nội dung câu hỏi:
    - QUY TẮC BẢNG: Nếu trong nội dung câu hỏi có ký hiệu đánh dấu bảng dạng [[TABLE_0]], [[TABLE_1]]..., bạn BẮT BUỘC phải giữ nguyên chính xác ký hiệu [[TABLE_0]], [[TABLE_1]]... tại đúng vị trí xuất hiện trong trường "question" (ví dụ: "Câu 25. Chọn một trong hai ngôn ngữ...\n[[TABLE_0]]\nKết quả in ra là:"). TUYỆT ĐỐI KHÔNG xóa ký hiệu [[TABLE_...]] và KHÔNG tự ý gộp nội dung bảng thành văn bản phẳng.
@@ -2423,13 +3003,16 @@ ${processedHtml}${tableRefNotes}`;
           parsedData.part1.forEach((q, idx) => { q.id = idx + 1; });
           parsedData.part2.forEach((q, idx) => { q.id = idx + 1; });
           parsedData.part3.forEach((q, idx) => { q.id = idx + 1; });
-          
+
+          applyDeterministicAnswersFromDoc(parsedData, cleanHtml, answerKey);
           return restoreTablesInExamData(parsedData, extractedTables, extractedImages);
         } catch (error) {
           console.error("Gemini Error:", error);
           showAlert("Lỗi khi dùng AI phân tích đề thi: " + error.message + "\n\nĐang chuyển sang chế độ phân tích cơ bản (có thể không chính xác).");
           // Fallback to manual parser if Gemini fails
-          return restoreTablesInExamData(parseExamHTML(processedHtml), extractedTables, extractedImages);
+          const fallbackData = parseExamHTML(processedHtml);
+          applyDeterministicAnswersFromDoc(fallbackData, cleanHtml, answerKey);
+          return restoreTablesInExamData(fallbackData, extractedTables, extractedImages);
         }
       }
 
@@ -2513,9 +3096,16 @@ ${processedHtml}${tableRefNotes}`;
         for (let i = 0; i < blocks.length; i++) {
           let text = blocks[i].text;
           let el = blocks[i].element;
+          const trimmedText = text.trim();
+
+          // Stop adding questions if an Answer Key summary section starts
+          if (/^(?:(?:[IVX]+|\d+|[A-Z])[.:)\-\s]+)?(?:bảng\s+đáp\s+án|hướng\s+dẫn\s+chấm)\b/i.test(trimmedText)) {
+            currentQuestion = null;
+            currentPart = 0;
+            continue;
+          }
 
           // Nhận diện các phần (phải ở đầu dòng/tiêu đề để không nhận diện nhầm nội dung câu hỏi như 'thành phần 1', 'phần mềm'...)
-          const trimmedText = text.trim();
           if (
             /^(?:mục\s+|phần\s+|part\s*)(?:iii|3)\b/i.test(trimmedText) ||
             /^(?:mục\s+|phần\s+|part\s*)(?:iii|3)\s*[:.\-]/i.test(trimmedText)
@@ -2538,6 +3128,8 @@ ${processedHtml}${tableRefNotes}`;
             currentQuestion = null;
             continue;
           }
+
+          if (currentPart === 0) continue;
 
           // Ignore Part II section headers (e.g. "A. Phần chung...", "B. Phần riêng...", "B1. Khoa học máy tính", "B2. Tin học ứng dụng")
           if (
@@ -2622,66 +3214,44 @@ ${processedHtml}${tableRefNotes}`;
                 text = `A. ${missingAInline[1]} ${missingAInline[2]} ${missingAInline[3]} ${missingAInline[4]}`;
               }
               let isOptionLine = /^[A-D][.:)\/]/.test(text.trim());
-              if (isOptionLine) {
+              if (/^Giải\s+thích(?:\s+chi\s+tiết)?\s*[:.]/i.test(text.trim())) {
+                const expText = text.trim().replace(/^Giải\s+thích(?:\s+chi\s+tiết)?\s*[:.]\s*/i, "").trim();
+                currentQuestion.explanation = currentQuestion.explanation
+                  ? currentQuestion.explanation + "\n" + expText
+                  : expText;
+              } else if (isOptionLine) {
                 // Tách các lựa chọn nếu chúng nằm trên cùng 1 dòng
                 const parts = text
                   .split(/(?=(?:^|\s)[A-D][.:)\/])/)
                   .filter((p) => p.trim());
                 parts.forEach((part) => {
-                  if (/^[A-D][.:)\/]/.test(part.trim())) {
+                  if (/^[A-D][.:)\/]/.test(part.trim()) && currentQuestion.options.length < 4) {
                     currentQuestion.options.push(part.trim());
                   }
                 });
 
-                const uTags = el.querySelectorAll(
-                  'u, strong, b, em, mark, span[style*="underline"], span[style*="bold"], span[style*="color: red"]',
-                );
-                if (uTags.length > 0) {
-                  if (parts.length === 1) {
-                    const optText = parts[0].trim();
-                    if (/^A[.:)\/]/.test(optText)) currentQuestion.answer = 0;
-                    if (/^B[.:)\/]/.test(optText)) currentQuestion.answer = 1;
-                    if (/^C[.:)\/]/.test(optText)) currentQuestion.answer = 2;
-                    if (/^D[.:)\/]/.test(optText)) currentQuestion.answer = 3;
-                  } else {
-                    uTags.forEach((tag) => {
-                      const tagText = tag.textContent.trim();
-                      if (!tagText) return;
-                      parts.forEach((part, idx) => {
-                        if (
-                          part.includes(tagText) ||
-                          tagText.includes(part.substring(0, 2))
-                        ) {
-                          if (/^A[.:)\/]/.test(part))
-                            currentQuestion.answer = 0;
-                          if (/^B[.:)\/]/.test(part))
-                            currentQuestion.answer = 1;
-                          if (/^C[.:)\/]/.test(part))
-                            currentQuestion.answer = 2;
-                          if (/^D[.:)\/]/.test(part))
-                            currentQuestion.answer = 3;
-                        }
-                      });
-                    });
-                  }
+                // Prioritize underline / mark / red highlight; do NOT treat bold "A.", "B.", "C.", "D." labels as answer
+                const markedIdx = findMarkedOptionIndexInElement(el);
+                if (markedIdx !== null) {
+                  currentQuestion.answer = markedIdx;
                 }
               } else if (currentQuestion.options.length === 0) {
                 currentQuestion.question += "\n" + text;
+              } else if (currentQuestion.explanation) {
+                currentQuestion.explanation += "\n" + text.trim();
               }
             } else if (currentPart === 2) {
               if (!currentQuestion.subQuestions) currentQuestion.subQuestions = [];
               const isStatement = /^[a-d][.:)\/]/i.test(text.trim());
               if (isStatement) {
+                const trimmedStmt = text.trim();
                 let isTrue =
-                  text.toLowerCase().includes("(đ)") ||
-                  text.toLowerCase().endsWith("đ") ||
-                  text.toLowerCase().includes("đúng");
+                  /\(\s*(?:đ|đúng)\s*\)\s*$/i.test(trimmedStmt) ||
+                  /[-–:]\s*đúng\s*$/i.test(trimmedStmt);
 
-                const uTags = Array.from(el.querySelectorAll('u, span[style*="underline"]')).filter(tag => tag.textContent.trim().length > 0);
-                const boldTags = Array.from(el.querySelectorAll('strong, b, span[style*="bold"]')).filter(tag => tag.textContent.trim().length > 0);
-                const redTags = Array.from(el.querySelectorAll('span[style*="color: red"], span[style*="color:#ff0000"]')).filter(tag => tag.textContent.trim().length > 0);
-                
-                if (uTags.length > 0 || boldTags.length > 0 || redTags.length > 0) {
+                // In Part II, ONLY underline on the option marker (e.g. <u>a)</u>) or statement text marks True;
+                // bold formatting (<strong>b)</strong>) is normal label styling and MUST NOT be treated as True.
+                if (isElementStatementUnderlined(el)) {
                   isTrue = true;
                 }
 
@@ -2693,8 +3263,8 @@ ${processedHtml}${tableRefNotes}`;
                     );
                 let cleanText = letterMatch ? letterMatch[2] : text;
                 cleanText = cleanText
-                  .replace(/\s*\([đs]\)\s*$/i, "")
-                  .replace(/\s*(đúng|sai)\s*$/i, "");
+                  .replace(/\s*\(\s*(?:đ|s|đúng|sai)\s*\)\s*$/i, "")
+                  .replace(/\s*[-–:]\s*(?:đúng|sai)\s*$/i, "");
 
                 currentQuestion.subQuestions.push({
                   id: letter,
@@ -3269,19 +3839,23 @@ ${processedHtml}${tableRefNotes}`;
         let wrongAnswers = [];
         const isType3 = (state.examData.examType || "2") === "3";
 
+        ensureExamContentIntegrity(state.examData);
+
         // Part 1
         state.examData.part1.forEach((q) => {
           if (!q) return;
           const cleanQ = q.question ? q.question.replace(/^(Câu|Bài)\s*\d+[\s.:\-]+/i, "") : "";
-          if (state.answers.part1 && state.answers.part1[q.id] === q.answer) {
+          const maxOptIdx = Math.max(0, Math.min(3, (Array.isArray(q.options) ? q.options.length : 4) - 1));
+          const correctIdx = Math.max(0, Math.min(maxOptIdx, typeof q.answer === "number" ? Math.round(q.answer) : 0));
+          if (state.answers.part1 && state.answers.part1[q.id] === correctIdx) {
             const p1Point = isType3 ? 0.4 : 0.25;
             score += p1Point;
             correctP1++;
           } else {
-            const optAnswer = q.options && q.options[q.answer] !== undefined
-              ? String(q.options[q.answer]).replace(/^[A-D][.:)\/]\s*/, "")
+            const optAnswer = q.options && q.options[correctIdx] !== undefined
+              ? String(q.options[correctIdx]).replace(/^[A-D][.:)\/]\s*/, "")
               : "";
-            let correctAnsText = `${String.fromCharCode(65 + q.answer)}. ${formatQuestionContent(optAnswer)}`;
+            let correctAnsText = `${String.fromCharCode(65 + correctIdx)}. ${formatQuestionContent(optAnswer)}`;
             if (q.explanation) {
                correctAnsText += `<br><span class="text-gray-500 italic text-xs mt-1 block font-normal">Giải thích: ${formatQuestionContent(q.explanation)}</span>`;
             }

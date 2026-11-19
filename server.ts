@@ -55,33 +55,128 @@ async function startServer() {
     });
   });
 
-  const FALLBACK_MODELS = ['gemini-3.8-flash', 'gemini-flash-latest', 'gemini-3.1-flash-lite'];
+  const PRIMARY_MODEL = 'gemini-4-hydrogen';
+  const FALLBACK_MODELS = ['gemini-4-hydrogen', 'gemini-3.1-flash-lite'];
 
-  async function generateContentWithFallback(preferredModel: string, contents: any, config?: any) {
-    const modelsToTry = [preferredModel, ...FALLBACK_MODELS.filter((m) => m !== preferredModel)];
+  function isTransientGeminiError(err: any): boolean {
+    const name = String(err?.name || '');
+    const msg = String(err?.message || err || '').toLowerCase();
+    const status = err?.status || err?.code;
+    return (
+      status === 408 ||
+      status === 429 ||
+      status === 500 ||
+      status === 502 ||
+      status === 503 ||
+      status === 504 ||
+      name === 'AbortError' ||
+      name === 'TimeoutError' ||
+      msg.includes('503') ||
+      msg.includes('429') ||
+      msg.includes('unavailable') ||
+      msg.includes('resource_exhausted') ||
+      msg.includes('high demand') ||
+      msg.includes('overloaded') ||
+      msg.includes('timeout') ||
+      msg.includes('aborted') ||
+      msg.includes('fetch failed')
+    );
+  }
+
+  function sanitizeConfigForModel(modelName: string, config?: any, timeoutMs?: number) {
+    const baseConfig = config && typeof config === 'object' ? { ...config } : {};
+    if (modelName.startsWith('gemini-4-')) {
+      delete baseConfig.temperature;
+      delete baseConfig.topP;
+      delete baseConfig.topK;
+      delete baseConfig.candidateCount;
+    }
+    if (timeoutMs) {
+      baseConfig.httpOptions = {
+        ...(baseConfig.httpOptions || {}),
+        timeout: timeoutMs,
+      };
+    }
+    return baseConfig;
+  }
+
+  const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+  async function generateContentWithFallback(
+    preferredModel: string,
+    contents: any,
+    config?: any,
+    timeoutMs = 20000
+  ) {
+    const normalizedModel =
+      !preferredModel || preferredModel === 'gemini-3.8-flash' || preferredModel === 'gemini-flash-latest'
+        ? PRIMARY_MODEL
+        : preferredModel;
+    const modelsToTry = [normalizedModel, ...FALLBACK_MODELS.filter((m) => m !== normalizedModel)];
     let lastError: any = null;
-    for (const modelName of modelsToTry) {
-      try {
-        return await ai.models.generateContent({
-          model: modelName,
-          contents,
-          config,
-        });
-      } catch (err: any) {
-        lastError = err;
-        const msg = String(err?.message || err || '');
-        const isTransient =
-          err?.status === 503 ||
-          err?.status === 429 ||
-          msg.includes('503') ||
-          msg.includes('429') ||
-          msg.includes('UNAVAILABLE') ||
-          msg.includes('RESOURCE_EXHAUSTED') ||
-          msg.includes('high demand');
-        if (!isTransient) {
-          throw err;
+
+    for (let i = 0; i < modelsToTry.length; i++) {
+      const modelName = modelsToTry[i];
+      const isLastModel = i === modelsToTry.length - 1;
+      const maxAttempts = isLastModel ? 2 : 1;
+      const modelTimeout = isLastModel ? Math.max(timeoutMs, 45000) : timeoutMs;
+
+      for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+        try {
+          return await ai.models.generateContent({
+            model: modelName,
+            contents,
+            config: sanitizeConfigForModel(modelName, config, modelTimeout),
+          });
+        } catch (err: any) {
+          lastError = err;
+          if (!isTransientGeminiError(err)) {
+            throw err;
+          }
+          if (attempt < maxAttempts) {
+            await sleep(800 * attempt);
+          }
         }
-        console.warn(`Model ${modelName} returned transient error (${msg.slice(0, 120)}), falling back to next model...`);
+      }
+    }
+    throw lastError;
+  }
+
+  async function generateContentStreamWithFallback(
+    preferredModel: string,
+    contents: any,
+    config?: any,
+    timeoutMs = 20000
+  ) {
+    const normalizedModel =
+      !preferredModel || preferredModel === 'gemini-3.8-flash' || preferredModel === 'gemini-flash-latest'
+        ? PRIMARY_MODEL
+        : preferredModel;
+    const modelsToTry = [normalizedModel, ...FALLBACK_MODELS.filter((m) => m !== normalizedModel)];
+    let lastError: any = null;
+
+    for (let i = 0; i < modelsToTry.length; i++) {
+      const modelName = modelsToTry[i];
+      const isLastModel = i === modelsToTry.length - 1;
+      const maxAttempts = isLastModel ? 2 : 1;
+      const modelTimeout = isLastModel ? Math.max(timeoutMs, 45000) : timeoutMs;
+
+      for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+        try {
+          return await ai.models.generateContentStream({
+            model: modelName,
+            contents,
+            config: sanitizeConfigForModel(modelName, config, modelTimeout),
+          });
+        } catch (err: any) {
+          lastError = err;
+          if (!isTransientGeminiError(err)) {
+            throw err;
+          }
+          if (attempt < maxAttempts) {
+            await sleep(800 * attempt);
+          }
+        }
       }
     }
     throw lastError;
@@ -101,67 +196,75 @@ async function startServer() {
         });
       }
 
-      const response = await generateContentWithFallback('gemini-3.8-flash', prompt, {
-        responseMimeType: 'application/json',
-        responseSchema: {
-          type: Type.OBJECT,
-          properties: {
-            part1: {
-              type: Type.ARRAY,
-              items: {
-                type: Type.OBJECT,
-                properties: {
-                  id: { type: Type.NUMBER },
-                  question: { type: Type.STRING },
-                  options: { type: Type.ARRAY, items: { type: Type.STRING } },
-                  answer: { type: Type.NUMBER },
-                  explanation: { type: Type.STRING, description: 'Detailed explanation if present in the text' },
+      const response = await generateContentWithFallback(
+        PRIMARY_MODEL,
+        prompt,
+        {
+          responseMimeType: 'application/json',
+          responseSchema: {
+            type: Type.OBJECT,
+            properties: {
+              part1: {
+                type: Type.ARRAY,
+                items: {
+                  type: Type.OBJECT,
+                  properties: {
+                    id: { type: Type.NUMBER },
+                    question: { type: Type.STRING },
+                    options: { type: Type.ARRAY, items: { type: Type.STRING } },
+                    answer: {
+                      type: Type.NUMBER,
+                      description: '0-based index of the correct option in the options array: 0 for A, 1 for B, 2 for C, 3 for D. Must be an integer 0, 1, 2, or 3 (NEVER 1-based, NEVER 4).',
+                    },
+                    explanation: { type: Type.STRING, description: 'Detailed explanation if present in the text' },
+                  },
+                  required: ['id', 'question', 'options', 'answer'],
                 },
-                required: ['id', 'question', 'options', 'answer'],
               },
-            },
-            part2: {
-              type: Type.ARRAY,
-              items: {
-                type: Type.OBJECT,
-                properties: {
-                  id: { type: Type.NUMBER },
-                  question: { type: Type.STRING },
-                  explanation: { type: Type.STRING, description: 'Detailed explanation if present for the overall question' },
-                  subQuestions: {
-                    type: Type.ARRAY,
-                    items: {
-                      type: Type.OBJECT,
-                      properties: {
-                        id: { type: Type.STRING },
-                        text: { type: Type.STRING, description: 'The complete text of the sub-question, including any multi-line code blocks, SQL statements, or explanations' },
-                        answer: { type: Type.BOOLEAN, description: 'True if the sub-question is underlined in HTML, False otherwise.' },
-                        explanation: { type: Type.STRING, description: 'Detailed explanation for this specific sub-question if present' },
+              part2: {
+                type: Type.ARRAY,
+                items: {
+                  type: Type.OBJECT,
+                  properties: {
+                    id: { type: Type.NUMBER },
+                    question: { type: Type.STRING },
+                    explanation: { type: Type.STRING, description: 'Detailed explanation if present for the overall question' },
+                    subQuestions: {
+                      type: Type.ARRAY,
+                      items: {
+                        type: Type.OBJECT,
+                        properties: {
+                          id: { type: Type.STRING },
+                          text: { type: Type.STRING, description: 'The complete text of the sub-question, including any multi-line code blocks, SQL statements, or explanations' },
+                          answer: { type: Type.BOOLEAN, description: 'True if the sub-question is underlined in HTML, False otherwise.' },
+                          explanation: { type: Type.STRING, description: 'Detailed explanation for this specific sub-question if present' },
+                        },
+                        required: ['id', 'text', 'answer'],
                       },
-                      required: ['id', 'text', 'answer'],
                     },
                   },
+                  required: ['id', 'question', 'subQuestions'],
                 },
-                required: ['id', 'question', 'subQuestions'],
+              },
+              part3: {
+                type: Type.ARRAY,
+                items: {
+                  type: Type.OBJECT,
+                  properties: {
+                    id: { type: Type.NUMBER },
+                    question: { type: Type.STRING },
+                    answer: { type: Type.STRING },
+                    explanation: { type: Type.STRING, description: 'Detailed explanation if present in the text' },
+                  },
+                  required: ['id', 'question', 'answer'],
+                },
               },
             },
-            part3: {
-              type: Type.ARRAY,
-              items: {
-                type: Type.OBJECT,
-                properties: {
-                  id: { type: Type.NUMBER },
-                  question: { type: Type.STRING },
-                  answer: { type: Type.STRING },
-                  explanation: { type: Type.STRING, description: 'Detailed explanation if present in the text' },
-                },
-                required: ['id', 'question', 'answer'],
-              },
-            },
+            required: ['part1', 'part2', 'part3'],
           },
-          required: ['part1', 'part2', 'part3'],
         },
-      });
+        35000
+      );
 
       return res.json({ text: response.text });
     } catch (error: any) {
@@ -173,14 +276,14 @@ async function startServer() {
   // Generic Gemini generate endpoint
   app.post('/api/gemini/generate', async (req: Request, res: Response) => {
     try {
-      const { model = 'gemini-3.8-flash', contents, config } = req.body;
+      const { model = PRIMARY_MODEL, contents, config } = req.body;
       if (!process.env.GEMINI_API_KEY || process.env.GEMINI_API_KEY === 'undefined') {
         return res.status(500).json({
           error: 'GEMINI_API_KEY is not configured on the server. You can configure your attached API key in the Settings > Secrets panel.',
         });
       }
 
-      const response = await generateContentWithFallback(model, contents, config);
+      const response = await generateContentWithFallback(model, contents, config, 15000);
 
       return res.json({ text: response.text });
     } catch (error: any) {
@@ -192,7 +295,7 @@ async function startServer() {
   // Streaming endpoint for Gemini content streaming
   app.post('/api/gemini/stream', async (req: Request, res: Response) => {
     try {
-      const { model = 'gemini-3.8-flash', contents, config } = req.body;
+      const { model = PRIMARY_MODEL, contents, config } = req.body;
       if (!process.env.GEMINI_API_KEY || process.env.GEMINI_API_KEY === 'undefined') {
         return res.status(500).json({
           error: 'GEMINI_API_KEY is not configured on the server. You can configure your attached API key in the Settings > Secrets panel.',
@@ -203,11 +306,7 @@ async function startServer() {
       res.setHeader('Cache-Control', 'no-cache');
       res.setHeader('Connection', 'keep-alive');
 
-      const responseStream = await ai.models.generateContentStream({
-        model,
-        contents,
-        config,
-      });
+      const responseStream = await generateContentStreamWithFallback(model, contents, config, 15000);
 
       for await (const chunk of responseStream) {
         res.write(`data: ${JSON.stringify({ text: chunk.text })}\n\n`);
